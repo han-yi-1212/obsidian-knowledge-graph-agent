@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Graph Agent — Demo</title>
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px;
+  background: #181825; border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+}
+.header h1 { font-size: 16px; font-weight: 700; color: #818cf8; }
+.header-right { display: flex; gap: 10px; align-items: center; }
+.api-key-input {
+  width: 280px; padding: 6px 10px; font-size: 12px;
+  border: 1px solid #45475a; border-radius: 6px;
+  background: #1e1e2e; color: #cdd6f4; outline: none;
+}
+.api-key-input:focus { border-color: #6366f1; }
+.api-key-input::placeholder { color: #6c7086; }
+.header-btn {
+  padding: 6px 14px; border: 1px solid #45475a; border-radius: 6px;
+  background: #1e1e2e; color: #cdd6f4; font-size: 12px; cursor: pointer;
+}
+.header-btn:hover { background: #313244; }
+.header-btn.primary { background: #6366f1; border-color: #6366f1; color: #fff; }
+.header-btn.primary:hover { background: #4f46e5; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-dot.ok { background: #10b981; }
+.status-dot.err { background: #ef4444; }
+.status-dot.off { background: #6c7086; }
+
+/* ═══════════════════════════════════════════════════
+   MAIN LAYOUT: 2/3 graph | 1/3 chat
+   ═══════════════════════════════════════════════════ */
+.main {
+  display: flex; flex: 1; min-height: 0;
+}
+
+/* ── Graph Panel (left 2/3) ── */
+.graph-panel {
+  flex: 2; display: flex; flex-direction: column; min-width: 0;
+  border-right: 1px solid #313244;
+}
+.graph-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #181825;
+  border-bottom: 1px solid #313244; flex-shrink: 0;
+}
+.graph-search {
+  flex: 1; padding: 6px 12px;
+  border: 1px solid #45475a; border-radius: 6px;
+  background: #1e1e2e; color: #cdd6f4; font-size: 13px; outline: none;
+}
+.graph-search:focus { border-color: #6366f1; }
+.graph-search::placeholder { color: #6c7086; }
+.graph-btn {
+  padding: 5px 12px; border: 1px solid #45475a; border-radius: 6px;
+  background: #1e1e2e; color: #cdd6f4; font-size: 11px; cursor: pointer;
+}
+.graph-btn:hover { background: #313244; }
+.graph-canvas { flex: 1; min-height: 0; position: relative; background: #1e1e2e; }
+.graph-legend {
+  position: absolute; bottom: 12px; left: 12px;
+  display: flex; gap: 12px; font-size: 10px; color: #6c7086;
+  background: rgba(24,24,37,0.9); padding: 6px 10px; border-radius: 6px;
+  pointer-events: none;
+}
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+/* ── Chat Panel (right 1/3) ── */
+.chat-panel {
+  flex: 1; display: flex; flex-direction: column; min-width: 340px;
+  background: #181825;
+}
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid #313244; flex-shrink: 0;
+}
+.chat-header h3 { font-size: 13px; color: #818cf8; }
+.chat-context {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 6px 12px; background: #1e1e2e;
+  border-bottom: 1px solid #313244; min-height: 28px; align-items: center;
+  flex-shrink: 0;
+}
+.context-chip {
+  display: inline-flex; align-items: center; padding: 2px 8px;
+  border-radius: 10px; font-size: 10px; white-space: nowrap;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+  background: rgba(245,158,11,0.15); color: #fbbf24;
+  border: 1px solid rgba(245,158,11,0.3); cursor: pointer;
+}
+.context-chip:hover { background: rgba(239,68,68,0.2); color: #f87171; }
+.context-hint { font-size: 10px; color: #6c7086; }
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.message {
+  display: flex; gap: 8px; max-width: 100%;
+}
+.message.user { flex-direction: row-reverse; }
+.message-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; flex-shrink: 0; color: #fff;
+}
+.message.user .message-avatar { background: #6366f1; }
+.message.assistant .message-avatar { background: #10b981; }
+.message-body {
+  padding: 8px 12px; border-radius: 10px; font-size: 12.5px;
+  line-height: 1.55; max-width: 85%; word-wrap: break-word;
+}
+.message.user .message-body {
+  background: rgba(99,102,241,0.2); border-top-right-radius: 3px;
+}
+.message.assistant .message-body {
+  background: #1e1e2e; border: 1px solid #313244; border-top-left-radius: 3px;
+}
+.message-body code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+.message-body strong { color: #fbbf24; }
+.message-body .wikilink { color: #818cf8; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.message-body .wikilink:hover { color: #a5b4fc; }
+.loading::after {
+  content: ''; display: inline-block; width: 8px; height: 8px; margin-left: 6px;
+  border-radius: 50%; border: 1.5px solid #6c7086; border-top-color: transparent;
+  animation: spin 0.6s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.chat-input-area {
+  display: flex; gap: 8px; padding: 10px 12px;
+  border-top: 1px solid #313244; align-items: flex-end; flex-shrink: 0;
+}
+.chat-input {
+  flex: 1; padding: 8px 12px;
+  border: 1px solid #45475a; border-radius: 8px;
+  background: #1e1e2e; color: #cdd6f4; font-size: 13px;
+  line-height: 1.5; resize: none; min-height: 38px; max-height: 160px;
+  outline: none; font-family: inherit;
+}
+.chat-input:focus { border-color: #6366f1; }
+.chat-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-input::placeholder { color: #6c7086; }
+.chat-send-btn {
+  padding: 8px 16px; border: none; border-radius: 8px;
+  background: #6366f1; color: #fff; font-size: 13px;
+  font-weight: 600; cursor: pointer; height: 38px; white-space: nowrap;
+}
+.chat-send-btn:hover { background: #4f46e5; }
+.chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HEADER ═══════════════ -->
+<div class="header">
+  <h1>Knowledge Graph Agent</h1>
+  <div class="header-right">
+    <span id="statusDot" class="status-dot off" title="API status"></span>
+    <input id="apiKeyInput" class="api-key-input" type="password" placeholder="DeepSeek API Key (sk-...)" />
+    <button id="saveKeyBtn" class="header-btn primary">Save Key</button>
+    <button id="sampleDataBtn" class="header-btn">Load Sample Data</button>
+    <span style="font-size:11px;color:#6c7086;">Model: deepseek-chat</span>
+  </div>
+</div>
+
+<!-- ═══════════════ MAIN LAYOUT ═══════════════ -->
+<div class="main">
+  <!-- ── Graph Panel ── -->
+  <div class="graph-panel">
+    <div class="graph-toolbar">
+      <input id="graphSearch" class="graph-search" type="text" placeholder="Search nodes..." />
+      <button id="fitBtn" class="graph-btn">Fit</button>
+      <button id="refreshBtn" class="graph-btn">Refresh</button>
+    </div>
+    <div id="graphCanvas" class="graph-canvas">
+      <div class="graph-legend">
+        <span><span class="legend-dot" style="background:#6366f1;"></span> Note</span>
+        <span><span class="legend-dot" style="background:#f59e0b;"></span> Search hit</span>
+        <span><span class="legend-dot" style="background:#3b82f6;"></span> RAG relevant</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Chat Panel ── -->
+  <div class="chat-panel">
+    <div class="chat-header">
+      <h3>AI Chat</h3>
+      <button id="clearChatBtn" class="graph-btn">Clear</button>
+    </div>
+    <div id="chatContext" class="chat-context">
+      <span class="context-hint">Enter your API key above to start</span>
+    </div>
+    <div id="chatMessages" class="chat-messages"></div>
+    <div class="chat-input-area">
+      <textarea id="chatInput" class="chat-input" placeholder="Ask about your knowledge graph..."
+                rows="1" disabled></textarea>
+      <button id="sendBtn" class="chat-send-btn" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let cy = null;
+let currentGraphData = { nodes: [], edges: [] };
+let chatHistory = [];
+let selectedContextNotes = [];
+let isStreaming = false;
+
+// ═══════════════════════════════════════════════════════
+// API KEY MANAGEMENT
+// ═══════════════════════════════════════════════════════
+const apiKeyInput = document.getElementById('apiKeyInput');
+const saveKeyBtn = document.getElementById('saveKeyBtn');
+const statusDot = document.getElementById('statusDot');
+const chatInput = document.getElementById('chatInput');
+const sendBtn = document.getElementById('sendBtn');
+
+// Load saved key
+const savedKey = localStorage.getItem('kga_deepseek_key');
+if (savedKey) {
+  apiKeyInput.value = savedKey;
+  onKeySaved();
+}
+
+saveKeyBtn.addEventListener('click', () => {
+  const key = apiKeyInput.value.trim();
+  if (!key) return;
+  localStorage.setItem('kga_deepseek_key', key);
+  onKeySaved();
+});
+
+function onKeySaved() {
+  statusDot.className = 'status-dot ok';
+  statusDot.title = 'API key configured';
+  chatInput.disabled = false;
+  sendBtn.disabled = false;
+  chatInput.placeholder = 'Ask about your knowledge graph...';
+  updateContextBadge();
+}
+
+function getApiKey() {
+  return localStorage.getItem('kga_deepseek_key') || '';
+}
+
+// ═══════════════════════════════════════════════════════
+// SAMPLE DATA
+// ═══════════════════════════════════════════════════════
+const sampleNotes = [
+  { id: 'ml-basics', title: 'Machine Learning Basics', content: 'Machine learning is a subset of artificial intelligence that enables systems to learn from data. Key concepts include supervised learning, unsupervised learning, and reinforcement learning. Common algorithms: linear regression, decision trees, SVM, and neural networks.', links: ['deep-learning', 'python-ecosystem', 'data-preprocessing'] },
+  { id: 'deep-learning', title: 'Deep Learning', content: 'Deep learning uses multi-layer neural networks to model complex patterns. Architectures include CNNs for image processing, RNNs and Transformers for sequential data. The backpropagation algorithm and gradient descent are fundamental training mechanisms.', links: ['ml-basics', 'transformer-arch', 'gpu-computing'] },
+  { id: 'transformer-arch', title: 'Transformer Architecture', content: 'The Transformer architecture, introduced in "Attention is All You Need" (2017), relies on self-attention mechanisms rather than recurrence. Key components: multi-head attention, positional encoding, feed-forward networks, and layer normalization. This architecture powers models like GPT, BERT, and DeepSeek.', links: ['deep-learning', 'llm-apps', 'attention-mechanism'] },
+  { id: 'llm-apps', title: 'LLM Applications', content: 'Large Language Models can be applied to text generation, summarization, translation, code generation, and question answering. Techniques like RAG (Retrieval-Augmented Generation) enhance LLMs with external knowledge bases. Fine-tuning adapts base models to specific domains.', links: ['transformer-arch', 'rag-techniques', 'prompt-engineering'] },
+  { id: 'rag-techniques', title: 'RAG Techniques', content: 'Retrieval-Augmented Generation combines information retrieval with text generation. The pipeline: chunk documents, embed into vectors, index in a vector database, retrieve relevant chunks at query time, and inject into the LLM prompt. Popular tools: LangChain, LlamaIndex, ChromaDB.', links: ['llm-apps', 'vector-databases', 'embedding-models'] },
+  { id: 'python-ecosystem', title: 'Python ML Ecosystem', content: 'Python dominates ML with libraries like NumPy, Pandas, Scikit-learn, PyTorch, and TensorFlow. Jupyter Notebooks provide interactive development. Package management via pip/conda. MLOps tools include MLflow, Weights & Biases, and DVC.', links: ['ml-basics', 'deep-learning'] },
+  { id: 'prompt-engineering', title: 'Prompt Engineering', content: 'Prompt engineering designs effective inputs for LLMs. Techniques: zero-shot, few-shot, chain-of-thought, tree-of-thought, and role prompting. System prompts set behavior constraints. Prompt templates enable reusable patterns.', links: ['llm-apps', 'rag-techniques'] },
+  { id: 'vector-databases', title: 'Vector Databases', content: 'Vector databases store and query high-dimensional embeddings. They enable semantic search via approximate nearest neighbor (ANN) algorithms like HNSW and IVF. Popular options: Pinecone, Weaviate, Milvus, Qdrant, and ChromaDB.', links: ['rag-techniques', 'embedding-models'] },
+  { id: 'embedding-models', title: 'Embedding Models', content: 'Embedding models convert text into dense vector representations. Models like text-embedding-3-small, BGE, and E5 map semantically similar texts to nearby vectors. Embedding dimension and context window are key parameters.', links: ['vector-databases', 'rag-techniques', 'transformer-arch'] },
+  { id: 'gpu-computing', title: 'GPU Computing for ML', content: 'GPUs accelerate ML training via massive parallelism. NVIDIA CUDA dominates the ecosystem. Key considerations: VRAM capacity, memory bandwidth, tensor cores. Cloud options: AWS, GCP, Azure GPU instances.', links: ['deep-learning', 'python-ecosystem'] },
+  { id: 'attention-mechanism', title: 'Attention Mechanism', content: 'Attention computes weighted representations of input sequences. Self-attention allows each token to attend to all others. Scaled dot-product attention: softmax(QK^T/√d_k)V. Multi-head attention runs multiple attention operations in parallel.', links: ['transformer-arch', 'deep-learning'] },
+  { id: 'data-preprocessing', title: 'Data Preprocessing', content: 'Data preprocessing transforms raw data into ML-ready format. Steps include cleaning, normalization, encoding categorical variables, handling missing values, and feature engineering. Train/validation/test splits prevent data leakage.', links: ['ml-basics', 'python-ecosystem'] },
+  { id: 'obsidian-km', title: 'Obsidian Knowledge Management', content: 'Obsidian is a knowledge management tool based on local Markdown files. Its graph view visualizes [[wikilinks]] between notes. Plugins extend functionality with custom views, commands, and settings. The metadata cache provides programmatic access to link relationships.', links: ['ml-basics', 'llm-apps', 'rag-techniques'] },
+];
+
+// ── Convert sample notes to graph data ──
+function buildGraphFromNotes(notes) {
+  // Compute in-degree from link arrays
+  const inDegree = new Map();
+  for (const n of notes) {
+    for (const target of n.links) {
+      inDegree.set(target, (inDegree.get(target) || 0) + 1);
+    }
+  }
+
+  const nodes = notes.map(n => ({
+    id: n.id,
+    label: n.title,
+    links: n.links.length + (inDegree.get(n.id) || 0),
+    fullContent: n.content,
+  }));
+
+  const edgeSet = new Set();
+  const edges = [];
+  for (const n of notes) {
+    for (const target of n.links) {
+      const eid = [n.id, target].sort().join('||');
+      if (!edgeSet.has(eid)) {
+        edgeSet.add(eid);
+        edges.push({ id: eid, source: n.id, target });
+      }
+    }
+  }
+  return { nodes, edges };
+}
+
+// ═══════════════════════════════════════════════════════
+// GRAPH RENDERING
+// ═══════════════════════════════════════════════════════
+function renderGraph(data) {
+  currentGraphData = data;
+  const container = document.getElementById('graphCanvas');
+  if (cy) cy.destroy();
+
+  const elements = [
+    ...data.nodes.map(n => ({ data: { id: n.id, label: n.label, links: n.links } })),
+    ...data.edges.map(e => ({ data: { id: e.id, source: e.source, target: e.target } })),
+  ];
+
+  cy = cytoscape({
+    container,
+    elements,
+    style: [
+      { selector: 'node', style: {
+        'label': 'data(label)',
+        'width': 18, 'height': 18,
+        'background-color': '#6366f1',
+        'color': '#e0e0e0', 'font-size': '10px',
+        'text-valign': 'bottom', 'text-halign': 'center',
+        'text-margin-y': 6, 'text-max-width': '120px',
+        'border-width': 1, 'border-color': '#818cf8',
+      }},
+      { selector: 'node.highlighted', style: {
+        'background-color': '#f59e0b', 'border-color': '#fbbf24', 'border-width': 3,
+      }},
+      { selector: 'node.dimmed', style: { 'opacity': 0.15 }},
+      { selector: 'node.relevant', style: {
+        'border-color': '#3b82f6', 'border-width': 3,
+        'width': 28, 'height': 28, 'background-color': '#3b82f6',
+      }},
+      { selector: 'edge', style: {
+        'width': 0.5, 'line-color': '#475569', 'opacity': 0.35,
+        'curve-style': 'bezier', 'target-arrow-shape': 'triangle',
+        'target-arrow-color': '#475569', 'arrow-scale': 0.5,
+      }},
+      { selector: 'edge.highlighted', style: {
+        'width': 2, 'line-color': '#f59e0b', 'opacity': 0.8,
+      }},
+      { selector: 'edge.dimmed', style: { 'opacity': 0.03 }},
+    ],
+    layout: {
+      name: 'cose',
+      animate: true,
+      animationDuration: 600,
+      nodeRepulsion: () => 6000,
+      idealEdgeLength: () => 100,
+      gravity: 0.25,
+      numIter: 800,
+      initialTemp: 150,
+      coolingFactor: 0.95,
+    },
+    minZoom: 0.15, maxZoom: 3,
+  });
+
+  // ── Events ──
+  cy.on('tap', 'node', (evt) => {
+    const node = evt.target;
+    document.getElementById('graphSearch').value = node.data('label');
+    highlightSearch(node.data('label'));
+  });
+
+  cy.on('dbltap', 'node', (evt) => {
+    const node = evt.target;
+    addToContext(node.id(), node.data('label'));
+  });
+
+  cy.on('cxttap', 'node', (evt) => {
+    evt.originalEvent.preventDefault();
+    const node = evt.target;
+    addToContext(node.id(), node.data('label'));
+  });
+
+  cy.on('tap', (evt) => {
+    if (evt.target === cy) {
+      document.getElementById('graphSearch').value = '';
+      clearHighlight();
+    }
+  });
+}
+
+function highlightSearch(query) {
+  if (!cy) return;
+  clearHighlight();
+  if (!query) return;
+
+  const q = query.toLowerCase();
+  const matched = new Set();
+  currentGraphData.nodes.forEach(n => {
+    if (n.label.toLowerCase().includes(q)) matched.add(n.id);
+  });
+
+  cy.nodes().forEach(n => {
+    if (matched.has(n.id())) n.addClass('highlighted');
+    else n.addClass('dimmed');
+  });
+  cy.edges().forEach(e => {
+    const s = e.source().id(), t = e.target().id();
+    if (matched.has(s) && matched.has(t)) e.addClass('highlighted');
+    else e.addClass('dimmed');
+  });
+}
+
+function clearHighlight() {
+  if (!cy) return;
+  cy.elements().removeClass('highlighted dimmed');
+}
+
+function highlightRelevant(searchResults) {
+  if (!cy) return;
+  cy.nodes().removeClass('relevant');
+
+  const scores = new Map();
+  searchResults.forEach(r => scores.set(r.id, r.score));
+  const maxScore = Math.max(...scores.values(), 1);
+
+  cy.nodes().forEach(n => {
+    const score = scores.get(n.id()) || 0;
+    if (score > 0) {
+      n.addClass('relevant');
+      const norm = score / maxScore;
+      n.css({
+        'width': 20 + norm * 36,
+        'height': 20 + norm * 36,
+        'background-color': `rgba(59,130,246,${0.4 + norm * 0.6})`,
+      });
+    } else {
+      n.css({ 'width': 18, 'height': 18, 'background-color': '#6366f1' });
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// RAG: local keyword search over sample notes
+// ═══════════════════════════════════════════════════════
+function searchNotes(query) {
+  const tokens = query.toLowerCase().split(/[\s,.:;!?()]+/).filter(t => t.length >= 2);
+  if (tokens.length === 0) return [];
+
+  // Stage 1: keyword recall (top 30 or all candidates)
+  const candidates = [];
+  for (const note of sampleNotes) {
+    const text = (note.title + ' ' + note.content).toLowerCase();
+    let score = 0;
+    for (const token of tokens) {
+      const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(escaped, 'gi');
+      const matches = text.match(re);
+      if (matches) {
+        score += matches.length;
+        if (note.title.toLowerCase().includes(token)) score += 3;
+      }
+    }
+    if (score > 0) {
+      if (selectedContextNotes.includes(note.id)) score += 10;
+      candidates.push({ note, score });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const topCandidates = candidates.slice(0, 30);
+
+  // Stage 2: reranker
+  const queryLower = query.toLowerCase();
+  const reranked = topCandidates.map(({ note, score }) => {
+    let finalScore = score;
+    const content = (note.title + ' ' + note.content).toLowerCase();
+
+    // Exact phrase match
+    if (content.includes(queryLower)) {
+      finalScore *= 2.5;
+    }
+
+    // Token proximity
+    let proximityBonus = 0;
+    const positions = tokens.map(t => content.indexOf(t)).filter(p => p !== -1).sort((a, b) => a - b);
+    if (positions.length >= 2) {
+      let totalGap = 0;
+      for (let i = 1; i < positions.length; i++) totalGap += positions[i] - positions[i - 1];
+      const avgGap = totalGap / (positions.length - 1);
+      proximityBonus = Math.max(0, 3.0 * (1 - avgGap / (content.length + 1)));
+    }
+    finalScore += proximityBonus;
+
+    // Extra title boost in rerank stage
+    for (const token of tokens) {
+      if (note.title.toLowerCase().includes(token)) finalScore += 1.0;
+    }
+
+    return {
+      id: note.id,
+      title: note.title,
+      chunk: note.content,
+      score: Math.round(finalScore * 100) / 100,
+    };
+  });
+
+  reranked.sort((a, b) => b.score - a.score);
+  return reranked.slice(0, 8);
+}
+
+// ═══════════════════════════════════════════════════════
+// DEEPSEEK API
+// ═══════════════════════════════════════════════════════
+async function chatStream(messages, onToken, onDone, onError) {
+  const apiKey = getApiKey();
+  if (!apiKey) { onError(new Error('No API key configured')); return; }
+
+  const body = {
+    model: 'deepseek-chat',
+    messages,
+    temperature: 0.7,
+    max_tokens: 4096,
+    stream: true,
+  };
+
+  try {
+    const resp = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      let errMsg = `API error ${resp.status}`;
+      try {
+        const errJson = JSON.parse(errText);
+        errMsg = errJson.error?.message || errMsg;
+      } catch {}
+      throw new Error(errMsg);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) { fullText += delta; onToken(delta); }
+        } catch {}
+      }
+    }
+    onDone(fullText);
+  } catch (err) {
+    onError(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+function buildSystemPrompt(searchResults) {
+  let prompt = `You are a knowledgeable AI assistant integrated into a knowledge graph about machine learning and AI.
+
+Answer questions based on the provided context when relevant. Reference notes using [[Note Title]] syntax. Help users connect ideas across different notes.
+
+`;
+
+  if (selectedContextNotes.length > 0) {
+    prompt += `\n## User-Selected Notes (these are the most important context)\n\n`;
+    for (const id of selectedContextNotes) {
+      const n = sampleNotes.find(s => s.id === id);
+      if (n) {
+        prompt += `### [[${n.title}]]\n${n.content}\n\n`;
+      }
+    }
+  }
+
+  if (searchResults.length > 0) {
+    prompt += `\n## Relevant Notes\n\n`;
+    for (const r of searchResults) {
+      prompt += `### [[${r.title}]]\n${r.chunk}\n\n`;
+    }
+  }
+
+  prompt += `\nAlways connect ideas across notes when possible. Keep answers concise and helpful.`;
+  return prompt;
+}
+
+// ═══════════════════════════════════════════════════════
+// CHAT UI
+// ═══════════════════════════════════════════════════════
+const chatMessages = document.getElementById('chatMessages');
+const chatContext = document.getElementById('chatContext');
+
+function addWelcomeMessage() {
+  addMessage('assistant', '你好！我是知识图谱智能助手。\n\n- 左侧图谱展示机器学习知识领域的笔记关联\n- **单击节点** 搜索定位，**双击或右键** 添加到对话上下文\n- 直接提问，我会自动检索相关笔记\n- 引用笔记时使用 [[笔记名]] 格式\n\n请先输入你的 DeepSeek API Key，然后加载示例数据开始体验。');
+}
+addWelcomeMessage();
+
+function updateContextBadge() {
+  chatContext.innerHTML = '';
+  if (selectedContextNotes.length === 0) {
+    chatContext.innerHTML = '<span class="context-hint">No notes selected — AI will search all notes</span>';
+    return;
+  }
+  for (const id of selectedContextNotes) {
+    const note = sampleNotes.find(n => n.id === id);
+    if (!note) continue;
+    const chip = document.createElement('span');
+    chip.className = 'context-chip';
+    chip.textContent = '📌 ' + note.title;
+    chip.title = 'Click to remove';
+    chip.addEventListener('click', () => {
+      selectedContextNotes = selectedContextNotes.filter(x => x !== id);
+      updateContextBadge();
+    });
+    chatContext.appendChild(chip);
+  }
+}
+
+function addToContext(id, label) {
+  if (!selectedContextNotes.includes(id)) {
+    selectedContextNotes.push(id);
+    updateContextBadge();
+  }
+}
+
+function addMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = 'message ' + role;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'message-avatar';
+  avatar.textContent = role === 'user' ? 'U' : 'AI';
+
+  const body = document.createElement('div');
+  body.className = 'message-body';
+
+  // Simple markdown rendering
+  let html = content
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink" data-note="$1">🔗 $1</span>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>');
+  body.innerHTML = html;
+
+  div.appendChild(avatar);
+  div.appendChild(body);
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return body;
+}
+
+function addLoadingMessage() {
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  const avatar = document.createElement('div');
+  avatar.className = 'message-avatar';
+  avatar.textContent = 'AI';
+  const body = document.createElement('div');
+  body.className = 'message-body';
+  body.innerHTML = '<span class="loading">Thinking</span>';
+  div.appendChild(avatar);
+  div.appendChild(body);
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return body;
+}
+
+async function sendMessage() {
+  if (isStreaming) return;
+  const text = chatInput.value.trim();
+  if (!text) return;
+
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  addMessage('user', text);
+
+  const loadingEl = addLoadingMessage();
+  setInputEnabled(false);
+  isStreaming = true;
+
+  try {
+    // RAG search
+    const results = searchNotes(text);
+    highlightRelevant(results);
+
+    // Build messages
+    const systemPrompt = buildSystemPrompt(results);
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...chatHistory,
+      { role: 'user', content: text },
+    ];
+
+    let streamContent = '';
+    let messageEl = null;
+
+    await chatStream(
+      messages,
+      (token) => {
+        if (loadingEl) { loadingEl.remove(); loadingEl = null; }
+        if (!messageEl) {
+          const div = document.createElement('div');
+          div.className = 'message assistant';
+          const avatar = document.createElement('div');
+          avatar.className = 'message-avatar';
+          avatar.textContent = 'AI';
+          messageEl = document.createElement('div');
+          messageEl.className = 'message-body';
+          div.appendChild(avatar);
+          div.appendChild(messageEl);
+          chatMessages.appendChild(div);
+        }
+        streamContent += token;
+        let html = streamContent
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/\[\[([^\]]+)\]\]/g, '<span class="wikilink" data-note="$1">🔗 $1</span>')
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\n/g, '<br>');
+        messageEl.innerHTML = html;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      },
+      (fullText) => {
+        chatHistory.push({ role: 'user', content: text });
+        chatHistory.push({ role: 'assistant', content: fullText });
+        if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+      },
+      (err) => {
+        if (loadingEl) loadingEl.remove();
+        addMessage('assistant', '❌ Error: ' + err.message);
+        statusDot.className = 'status-dot err';
+        statusDot.title = err.message;
+        setTimeout(() => {
+          if (getApiKey()) { statusDot.className = 'status-dot ok'; statusDot.title = 'API key configured'; }
+        }, 3000);
+      },
+    );
+  } catch (err) {
+    if (loadingEl) loadingEl.remove();
+    addMessage('assistant', '❌ Error: ' + err.message);
+  } finally {
+    isStreaming = false;
+    setInputEnabled(true);
+    chatInput.focus();
+  }
+}
+
+function setInputEnabled(enabled) {
+  chatInput.disabled = !enabled;
+  sendBtn.disabled = !enabled;
+  sendBtn.textContent = enabled ? 'Send' : '...';
+}
+
+// ═══════════════════════════════════════════════════════
+// EVENT BINDINGS
+// ═══════════════════════════════════════════════════════
+
+// Wikilink clicks in chat → highlight graph node
+chatMessages.addEventListener('click', (e) => {
+  const target = e.target;
+  if (target.classList.contains('wikilink')) {
+    const noteName = target.getAttribute('data-note');
+    if (noteName) {
+      // Find node by title (label)
+      const matchedNode = sampleNotes.find(n => n.title === noteName);
+      if (matchedNode && cy) {
+        highlightSearch(matchedNode.title);
+        document.getElementById('graphSearch').value = matchedNode.title;
+        cy.animate({ fit: { eles: cy.getElementById(matchedNode.id) }, duration: 500 });
+      }
+    }
+  }
+});
+document.getElementById('sendBtn').addEventListener('click', sendMessage);
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 160) + 'px';
+});
+
+// Graph toolbar
+document.getElementById('graphSearch').addEventListener('input', function() {
+  highlightSearch(this.value.trim());
+});
+
+document.getElementById('fitBtn').addEventListener('click', () => {
+  if (cy) cy.fit(undefined, 50);
+});
+
+document.getElementById('refreshBtn').addEventListener('click', () => {
+  if (currentGraphData.nodes.length > 0) renderGraph(currentGraphData);
+});
+
+document.getElementById('clearChatBtn').addEventListener('click', () => {
+  chatHistory = [];
+  chatMessages.innerHTML = '';
+  addWelcomeMessage();
+});
+
+document.getElementById('sampleDataBtn').addEventListener('click', () => {
+  const data = buildGraphFromNotes(sampleNotes);
+  renderGraph(data);
+  addMessage('assistant', '✅ 已加载示例知识图谱（13 个 ML/AI 领域的笔记节点）。\n\n你可以问我：\n- "Transformer 和 RAG 有什么关系？"\n- "深度学习需要哪些基础设施？"\n- "如何做文本数据的预处理？"');
+});
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+// Load sample data on start
+setTimeout(() => {
+  const data = buildGraphFromNotes(sampleNotes);
+  renderGraph(data);
+}, 300);
+</script>
+</body>
+</html>

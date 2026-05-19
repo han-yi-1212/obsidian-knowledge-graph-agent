@@ -1,0 +1,10 @@
+{
+  "id": "knowledge-graph-agent",
+  "name": "Knowledge Graph Agent",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "AI-powered knowledge graph with DeepSeek chat integration. Visualize note connections and converse with context-aware AI.",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-knowledge-graph-agent",
+  "version": "0.1.0",
+  "description": "Knowledge graph AI agent powered by DeepSeek — visualize your notes and chat with context",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "lint": "eslint src/"
+  },
+  "keywords": ["obsidian", "plugin", "knowledge-graph", "deepseek", "ai"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "latest",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "cytoscape": "^3.28.1"
+  }
+}
