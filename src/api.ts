@@ -43,9 +43,16 @@ export class DeepSeekAPI {
   }
 
   /**
-   * Non-streaming chat completion (used for summarization / context prep).
+   * Non-streaming chat completion (used for draft generation / context prep).
+   * Throws with error.code set to one of the API_ERROR_CODES values.
    */
   async chat(messages: ChatMessage[]): Promise<string> {
+    if (!this.settings.deepseekApiKey) {
+      const err = new Error('API key not configured');
+      (err as any).code = API_ERROR_CODES.KEY_MISSING;
+      throw err;
+    }
+
     const url = `${this.settings.deepseekBaseUrl}/v1/chat/completions`;
 
     const body = {
@@ -56,16 +63,38 @@ export class DeepSeekAPI {
       stream: false,
     };
 
-    const response = await requestUrl({
-      url,
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify(body),
-      throw: true,
-    });
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify(body),
+      });
 
-    const data = response.json;
-    return data.choices?.[0]?.message?.content ?? '';
+      if (!response.ok) {
+        const err = new Error(`API error ${response.status}`);
+        if (response.status === 401) {
+          (err as any).code = API_ERROR_CODES.KEY_INVALID;
+        } else if (response.status === 429) {
+          (err as any).code = API_ERROR_CODES.RATE_LIMITED;
+        }
+        throw err;
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content ?? '';
+    } catch (err: any) {
+      // Pass through already-classified errors
+      if (err?.code && Object.values(API_ERROR_CODES).includes(err.code)) {
+        throw err;
+      }
+      // Network / fetch errors
+      if (err instanceof TypeError || err?.message?.includes('fetch')) {
+        const netErr = new Error('Network error');
+        (netErr as any).code = API_ERROR_CODES.NETWORK;
+        throw netErr;
+      }
+      throw err;
+    }
   }
 
   /**

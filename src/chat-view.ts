@@ -5,10 +5,12 @@ import { apiErrorMessage, API_ERROR_CODES } from './api';
 import { DraftPreviewModal } from './draft-preview-modal';
 import {
   parseDraftsFromResponse,
+  sanitizeDrafts,
   validateDrafts,
   checkConflicts,
   createNotesFromDrafts,
   summarizeResults,
+  MAX_DRAFTS,
 } from './note-drafts';
 
 export const CHAT_VIEW_TYPE = 'knowledge-graph-agent-chat';
@@ -307,38 +309,47 @@ export class ChatView extends ItemView {
 
           if (loadingEl) loadingEl.remove();
 
-          const drafts = parseDraftsFromResponse(response);
-          const errors = validateDrafts(drafts ?? []);
+          const rawDrafts = parseDraftsFromResponse(response);
 
-          if (drafts && drafts.length > 0 && errors.length === 0) {
-            const conflicts = checkConflicts(drafts, this.app);
+          if (rawDrafts && rawDrafts.length > 0) {
+            // Truncate and sanitize
+            const truncated = rawDrafts.slice(0, MAX_DRAFTS);
+            const { cleaned: drafts, warnings } = sanitizeDrafts(truncated);
+            const errors = validateDrafts(drafts);
 
-            // Show preview modal, create on confirm
-            const handleConfirm = async (selected: typeof drafts) => {
-              const results = await createNotesFromDrafts(
-                selected,
-                this.app,
-                this.plugin.ragEngine,
-              );
-              const summary = summarizeResults(results);
-              await this.addMessage('assistant', summary);
+            if (errors.length === 0) {
+              const conflicts = checkConflicts(drafts, this.app);
+
+              const handleConfirm = async (selected: typeof drafts) => {
+                const results = await createNotesFromDrafts(
+                  selected,
+                  this.app,
+                  this.plugin.ragEngine,
+                );
+                const summary = summarizeResults(results);
+                await this.addMessage('assistant', summary);
+                this.plugin.chatHistory.push({ role: 'user', content: text });
+                this.plugin.chatHistory.push({ role: 'assistant', content: summary });
+
+                if (this.plugin.chatHistory.length > 40) {
+                  this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
+                }
+              };
+
+              new DraftPreviewModal(this.app, drafts, conflicts, warnings, handleConfirm).open();
+            } else {
+              const errorText = errors.map(e => `- ${e.message}`).join('\n');
+              await this.addMessage('assistant', `⚠️ Draft validation issues:\n\n${errorText}\n\n<details><summary>Raw AI response</summary>\n\n${response}\n</details>`);
               this.plugin.chatHistory.push({ role: 'user', content: text });
-              this.plugin.chatHistory.push({ role: 'assistant', content: summary });
+              this.plugin.chatHistory.push({ role: 'assistant', content: response });
 
               if (this.plugin.chatHistory.length > 40) {
                 this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
               }
-            };
-
-            new DraftPreviewModal(this.app, drafts, conflicts, handleConfirm).open();
-          } else {
-            // JSON parse or validation failed — show raw response as normal text
-            if (errors.length > 0) {
-              const errorText = errors.map(e => `- ${e.message}`).join('\n');
-              await this.addMessage('assistant', `⚠️ Draft validation issues:\n\n${errorText}\n\n<details><summary>Raw AI response</summary>\n\n${response}\n</details>`);
-            } else {
-              await this.addMessage('assistant', response);
             }
+          } else {
+            // JSON parse failed — show raw response as normal text
+            await this.addMessage('assistant', response);
             this.plugin.chatHistory.push({ role: 'user', content: text });
             this.plugin.chatHistory.push({ role: 'assistant', content: response });
 
@@ -346,10 +357,11 @@ export class ChatView extends ItemView {
               this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
             }
           }
-        } catch (err) {
+        } catch (err: any) {
           if (loadingEl) loadingEl.remove();
-          const msg = err instanceof Error ? err.message : String(err);
-          this.addMessage('assistant', `❌ Draft error: ${msg}`);
+          const code = err?.code;
+          const friendlyMsg = code ? apiErrorMessage(code) : (err instanceof Error ? err.message : String(err));
+          this.addMessage('assistant', `❌ ${friendlyMsg}`);
         }
 
         this.setDraftMode(false);

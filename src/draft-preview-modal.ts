@@ -1,11 +1,12 @@
 import { Modal, App } from 'obsidian';
-import type { NoteDraft } from './note-drafts';
+import type { NoteDraft, DraftSanitizeWarning } from './note-drafts';
 
 type OnConfirm = (selectedDrafts: NoteDraft[]) => void;
 
 export class DraftPreviewModal extends Modal {
   private drafts: NoteDraft[];
   private conflicts: Map<number, string>;
+  private warnings: DraftSanitizeWarning[];
   private onConfirm: OnConfirm;
   private checkboxes: HTMLInputElement[] = [];
 
@@ -13,11 +14,13 @@ export class DraftPreviewModal extends Modal {
     app: App,
     drafts: NoteDraft[],
     conflicts: Map<number, string>,
+    warnings: DraftSanitizeWarning[],
     onConfirm: OnConfirm,
   ) {
     super(app);
     this.drafts = drafts;
     this.conflicts = conflicts;
+    this.warnings = warnings;
     this.onConfirm = onConfirm;
   }
 
@@ -28,11 +31,24 @@ export class DraftPreviewModal extends Modal {
 
     contentEl.createEl('h3', { text: `Review ${this.drafts.length} note drafts` });
 
+    // Global warning banner if drafts were truncated or sanitized
+    if (this.warnings.length > 0) {
+      const banner = contentEl.createDiv('kga-draft-warnings-banner');
+      banner.createSpan({ text: `⚠️ ${this.warnings.length} field(s) sanitized:` });
+      const list = banner.createEl('ul');
+      for (const w of this.warnings) {
+        list.createEl('li', {
+          text: `#${w.index + 1} ${w.field}: "${w.original}" → "${w.cleaned}"`,
+        });
+      }
+    }
+
     const list = contentEl.createDiv('kga-draft-list');
 
     for (let i = 0; i < this.drafts.length; i++) {
       const draft = this.drafts[i];
       const hasConflict = this.conflicts.has(i);
+      const draftWarnings = this.warnings.filter(w => w.index === i);
 
       const item = list.createDiv('kga-draft-item');
 
@@ -58,10 +74,16 @@ export class DraftPreviewModal extends Modal {
       // Conflict warning
       if (hasConflict) {
         const warn = item.createDiv('kga-draft-item-conflict');
-        warn.setText(`Will rename: ${this.conflicts.get(i)} already exists → auto-suffix -2, -3…`);
+        warn.setText(`⚠ Will rename: ${this.conflicts.get(i)} already exists → auto-suffix -2, -3…`);
       } else {
         const ok = item.createDiv('kga-draft-item-ok');
         ok.setText('OK — no conflicts');
+      }
+
+      // Sanitize warnings for this draft
+      for (const w of draftWarnings) {
+        const sw = item.createDiv('kga-draft-item-sanitize');
+        sw.setText(`🔧 Auto-cleaned ${w.field}: "${w.original}" → "${w.cleaned}"`);
       }
 
       // Content preview

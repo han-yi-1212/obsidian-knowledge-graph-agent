@@ -586,10 +586,38 @@
   border-radius: 4px;
 }
 
+.kga-draft-warnings-banner {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.kga-draft-warnings-banner ul {
+  margin: 4px 0 0 16px;
+  padding: 0;
+}
+
+.kga-draft-warnings-banner li {
+  font-size: 11px;
+  color: var(--text-muted, #6c7086);
+  margin: 2px 0;
+}
+
 .kga-draft-item-conflict {
   font-size: 11px;
   color: #fbbf24;
   margin-bottom: 6px;
+  padding-left: 24px;
+}
+
+.kga-draft-item-sanitize {
+  font-size: 10px;
+  color: var(--text-muted, #6c7086);
+  margin-bottom: 4px;
   padding-left: 24px;
 }
 

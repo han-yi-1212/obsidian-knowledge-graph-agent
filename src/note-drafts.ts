@@ -14,6 +14,13 @@ export interface DraftValidationError {
   message: string;
 }
 
+export interface DraftSanitizeWarning {
+  index: number;
+  field: string;
+  original: string;
+  cleaned: string;
+}
+
 export interface DraftCreateResult {
   draft: NoteDraft;
   path: string;
@@ -22,17 +29,76 @@ export interface DraftCreateResult {
   error?: string;
 }
 
-const ILLEGAL_CHARS = /[\\/:*?"<>|]/;
-const MAX_DRAFTS = 10;
+const ILLEGAL_CHARS = /[\\/:*?"<>|]/g;
+const SEGMENT_ILLEGAL = /[\\/:*?"<>|]/g;
+export const MAX_DRAFTS = 10;
 
 /**
- * Resolve the full vault path for a draft.
- * Default folder is "AI Notes".
+ * Sanitize a file name segment — strip illegal chars, collapse whitespace.
+ */
+function sanitizeSegment(seg: string): string {
+  return seg.replace(SEGMENT_ILLEGAL, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Sanitize a folder path. Each segment is cleaned; "." and ".." are removed.
+ * Returns the sanitized path or "AI Notes" as default.
+ */
+export function sanitizeFolder(raw: string | undefined): string {
+  if (!raw) return 'AI Notes';
+
+  const segments = raw.replace(/\\/g, '/').split('/');
+  const cleaned = segments
+    .map(s => sanitizeSegment(s))
+    .filter(s => s.length > 0 && s !== '.' && s !== '..');
+
+  return cleaned.length > 0 ? cleaned.join('/') : 'AI Notes';
+}
+
+/**
+ * Sanitize a note title — strip illegal filename chars.
+ * Returns the cleaned title or "Untitled".
+ */
+export function sanitizeTitle(raw: string): string {
+  const cleaned = raw.replace(ILLEGAL_CHARS, '').replace(/\s+/g, ' ').trim();
+  return cleaned || 'Untitled';
+}
+
+/**
+ * Sanitize all drafts and return cleaned copies + warnings about what changed.
+ */
+export function sanitizeDrafts(drafts: NoteDraft[]): {
+  cleaned: NoteDraft[];
+  warnings: DraftSanitizeWarning[];
+} {
+  const cleaned: NoteDraft[] = [];
+  const warnings: DraftSanitizeWarning[] = [];
+
+  for (let i = 0; i < drafts.length; i++) {
+    const d = drafts[i];
+
+    const cleanTitle = sanitizeTitle(d.title);
+    if (cleanTitle !== d.title) {
+      warnings.push({ index: i, field: 'title', original: d.title, cleaned: cleanTitle });
+    }
+
+    const cleanFolder = sanitizeFolder(d.folder);
+    if (cleanFolder !== (d.folder || 'AI Notes')) {
+      warnings.push({ index: i, field: 'folder', original: d.folder || 'AI Notes', cleaned: cleanFolder });
+    }
+
+    cleaned.push({ ...d, title: cleanTitle, folder: cleanFolder });
+  }
+
+  return { cleaned, warnings };
+}
+
+/**
+ * Resolve the full vault path for a sanitized draft.
  */
 export function resolvePath(draft: NoteDraft): string {
-  const folder = (draft.folder || 'AI Notes').replace(/^\/+|\/+$/g, '');
-  const safeName = draft.title.replace(ILLEGAL_CHARS, '').trim() || 'Untitled';
-  return `${folder}/${safeName}.md`;
+  const folder = sanitizeFolder(draft.folder);
+  return `${folder}/${draft.title}.md`;
 }
 
 /**
@@ -40,9 +106,7 @@ export function resolvePath(draft: NoteDraft): string {
  * explanatory text around the JSON.
  *
  * Tries in order:
- *  1. ```
-json … ```
- code fence
+ *  1. ```json … ``` code fence
  *  2. First balanced { … } JSON block (scans for outermost braces)
  *
  * Returns null if no valid JSON with a "notes" array is found.
@@ -104,40 +168,21 @@ export function parseDraftsFromResponse(text: string): NoteDraft[] | null {
 }
 
 /**
- * Validate drafts. Returns errors for:
- *  - empty title
- *  - illegal filename characters
+ * Validate drafts for blocking issues only:
+ *  - empty title after sanitization
  *  - empty content
- *  - exceeding maxCount
+ *
+ * Illegal filename chars and folder safety are handled by sanitizeDrafts().
+ * Callers should truncate to maxCount before calling this.
  */
-export function validateDrafts(
-  drafts: NoteDraft[],
-  maxCount = MAX_DRAFTS,
-): DraftValidationError[] {
+export function validateDrafts(drafts: NoteDraft[]): DraftValidationError[] {
   const errors: DraftValidationError[] = [];
 
-  if (drafts.length > maxCount) {
-    errors.push({
-      index: -1,
-      field: 'count',
-      message: `Too many drafts: ${drafts.length} (max ${maxCount}). Only the first ${maxCount} will be used.`,
-    });
-  }
-
-  const effective = drafts.slice(0, maxCount);
-
-  for (let i = 0; i < effective.length; i++) {
-    const d = effective[i];
-    if (!d.title || !d.title.trim()) {
+  for (let i = 0; i < drafts.length; i++) {
+    const d = drafts[i];
+    if (!d.title || !sanitizeTitle(d.title)) {
       errors.push({ index: i, field: 'title', message: 'Title is required.' });
-    } else if (ILLEGAL_CHARS.test(d.title)) {
-      errors.push({
-        index: i,
-        field: 'title',
-        message: `Title contains illegal characters: ${d.title.match(ILLEGAL_CHARS)?.join(' ')}`,
-      });
     }
-
     if (!d.content || !d.content.trim()) {
       errors.push({ index: i, field: 'content', message: 'Content is required.' });
     }
@@ -168,7 +213,23 @@ export function checkConflicts(
 }
 
 /**
- * Batch-create notes from validated drafts.
+ * Create nested folders recursively. Idempotent — skips existing segments.
+ */
+async function ensureFolderPath(app: App, folderPath: string): Promise<void> {
+  const segments = folderPath.split('/').filter(s => s.length > 0);
+  let current = '';
+
+  for (const seg of segments) {
+    current = current ? `${current}/${seg}` : seg;
+    const existing = app.vault.getAbstractFileByPath(current);
+    if (!existing) {
+      await app.vault.createFolder(current);
+    }
+  }
+}
+
+/**
+ * Batch-create notes from sanitized, validated drafts.
  *
  * - Automatically deduplicates: if resolvePath collides, appends " -2", " -3", etc.
  * - Calls ragEngine.indexFile() for each successfully created note.
@@ -182,25 +243,20 @@ export async function createNotesFromDrafts(
   const results: DraftCreateResult[] = [];
 
   for (const draft of drafts) {
-    let targetPath = resolvePath(draft);
-
     try {
+      const folder = sanitizeFolder(draft.folder);
+      const baseName = draft.title;
+
       // Dedup: append -2, -3… if file already exists
-      let suffix = 2;
-      const folder = (draft.folder || 'AI Notes').replace(/^\/+|\/+$/g, '');
-      const baseName = draft.title.replace(ILLEGAL_CHARS, '').trim() || 'Untitled';
       let fileName = baseName;
+      let suffix = 2;
       while (app.vault.getAbstractFileByPath(`${folder}/${fileName}.md`)) {
         fileName = `${baseName} - ${suffix}`;
         suffix++;
       }
-      targetPath = `${folder}/${fileName}.md`;
+      const targetPath = `${folder}/${fileName}.md`;
 
-      // Ensure folder exists
-      const existingFolder = app.vault.getAbstractFileByPath(folder);
-      if (!existingFolder) {
-        await app.vault.createFolder(folder);
-      }
+      await ensureFolderPath(app, folder);
 
       const file = await app.vault.create(targetPath, draft.content);
       await ragEngine.indexFile(file);
@@ -209,12 +265,12 @@ export async function createNotesFromDrafts(
         draft,
         path: targetPath,
         status: fileName !== baseName ? 'renamed' : 'created',
-        originalPath: fileName !== baseName ? resolvePath(draft) : undefined,
+        originalPath: fileName !== baseName ? `${folder}/${baseName}.md` : undefined,
       });
     } catch (err) {
       results.push({
         draft,
-        path: targetPath,
+        path: resolvePath(draft),
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
@@ -240,7 +296,7 @@ export function summarizeResults(results: DraftCreateResult[]): string {
   if (skipped > 0) parts.push(`${skipped} skipped`);
   if (errors > 0) parts.push(`${errors} failed`);
 
-  let summary = `## 📝 Notes Created\n\n${parts.join(', ')}.\n\n`;
+  let summary = `## Notes Created\n\n${parts.join(', ')}.\n\n`;
 
   for (const r of results) {
     const icon = r.status === 'created' ? '✅' :
