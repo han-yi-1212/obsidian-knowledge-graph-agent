@@ -8,7 +8,8 @@ AI-powered knowledge graph for Obsidian with DeepSeek chat integration. Visualiz
 - **AI chat with RAG** — Ask questions about your vault. The plugin retrieves relevant notes and injects them as context, so the AI answers are grounded in your own writing.
 - **Two-stage retrieval** — Keyword recall followed by rich-signal reranking (phrase matching, proximity, title weighting) for high-quality search results.
 - **Source citations** — Every AI response shows which notes were used, with relevance scores and content previews. Click a source to open the note.
-- **Streaming responses** — Chat replies stream token-by-token via DeepSeek API.
+- **Streaming with stop** — Chat replies stream token-by-token via DeepSeek API. Press Stop or Enter to cancel mid-stream.
+- **Friendly error handling** — Clear messages for missing API key, invalid key (401), rate limiting (429), and network errors.
 - **Context pinning** — Right-click graph nodes to pin notes to the chat context. The AI prioritizes pinned notes when answering.
 
 ## Installation
@@ -62,10 +63,11 @@ Then copy `main.js`, `styles.css`, and `manifest.json` to your vault's `.obsidia
 ## Development
 
 ```bash
-npm install        # Install dependencies
-npm run dev        # Watch mode for development
-npm test           # Run retrieval tests
-npm run test:watch # Run tests in watch mode
+npm install         # Install dependencies
+npm run dev         # Watch mode for development
+npm test            # Run tests (51 tests)
+npm run test:watch  # Run tests in watch mode
+npm run release:zip # Build and package for distribution
 ```
 
 ## License

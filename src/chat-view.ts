@@ -258,31 +258,43 @@ export class ChatView extends ItemView {
           this.scrollToBottom();
         },
         async (fullText) => {
-          // Re-render final message with full Obsidian MarkdownRenderer
-          if (messageEl && fullText) {
-            messageEl.empty();
-            await this.renderWithObsidian(fullText, messageEl);
+          // Ensure loading indicator is removed even on early abort
+          if (!loadingRemoved && loadingEl) {
+            loadingEl.remove();
+            loadingRemoved = true;
           }
 
-          // Merge pinned notes (first) with automatic search results
-          const allSources = [...selectedSources, ...searchResults.filter(
-            sr => !selectedSources.some(ss => ss.path === sr.path),
-          )];
-
-          // Render source citations below the message
-          if (allSources.length > 0 && messageWrapper) {
-            this.renderSources(messageWrapper, allSources);
-            this.scrollToBottom();
-          }
-
-          // Only save to history if we got meaningful output
           if (fullText) {
+            // Re-render final message with full Obsidian MarkdownRenderer
+            if (messageEl) {
+              messageEl.empty();
+              await this.renderWithObsidian(fullText, messageEl);
+            }
+
+            // Merge pinned notes (first) with automatic search results
+            const allSources = [...selectedSources, ...searchResults.filter(
+              sr => !selectedSources.some(ss => ss.path === sr.path),
+            )];
+
+            // Render source citations below the message
+            if (allSources.length > 0 && messageWrapper) {
+              this.renderSources(messageWrapper, allSources);
+              this.scrollToBottom();
+            }
+
             this.plugin.chatHistory.push({ role: 'user', content: text });
             this.plugin.chatHistory.push({ role: 'assistant', content: fullText, sources: allSources });
 
             if (this.plugin.chatHistory.length > 40) {
               this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
             }
+          } else {
+            // Aborted before any tokens — remove the empty message wrapper and user message
+            if (messageWrapper) {
+              messageWrapper.remove();
+            }
+            // Show a brief hint that streaming was stopped
+            this.addMessage('assistant', '⏹️ Stopped');
           }
         },
         (err, code) => {
@@ -315,8 +327,14 @@ export class ChatView extends ItemView {
   /** Toggle between streaming and idle UI state. */
   private setStreamingState(streaming: boolean): void {
     this.isStreaming = streaming;
+    // Keep textarea enabled so Enter-to-stop works
     if (this.inputEl) {
-      this.inputEl.disabled = streaming;
+      this.inputEl.readOnly = streaming;
+      if (streaming) {
+        this.inputEl.setAttr('placeholder', 'Streaming… press Enter to stop');
+      } else {
+        this.inputEl.setAttr('placeholder', 'Ask about your knowledge graph...');
+      }
     }
     if (this.sendBtn) {
       this.sendBtn.style.display = streaming ? 'none' : '';

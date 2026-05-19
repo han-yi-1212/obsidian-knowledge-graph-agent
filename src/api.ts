@@ -154,8 +154,9 @@ export class DeepSeekAPI {
 
       onDone(fullText);
     } catch (err) {
-      // Aborted mid-stream — finish gracefully with partial text
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      // Aborted mid-stream — finish gracefully with partial text.
+      // Check .name rather than instanceof DOMException for Electron compat.
+      if (err instanceof Error && err.name === 'AbortError') {
         onDone(fullText);
         return;
       }
