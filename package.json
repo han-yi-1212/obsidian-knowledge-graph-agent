@@ -6,9 +6,17 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
-  "keywords": ["obsidian", "plugin", "knowledge-graph", "deepseek", "ai"],
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "knowledge-graph",
+    "deepseek",
+    "ai"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
@@ -17,7 +25,8 @@
     "esbuild": "^0.20.0",
     "obsidian": "latest",
     "tslib": "^2.6.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.1.6"
   },
   "dependencies": {
     "cytoscape": "^3.28.1"

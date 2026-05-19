@@ -130,6 +130,23 @@
   color: var(--text-muted, #6c7086);
 }
 
+.kga-context-indexing {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.kga-context-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+@keyframes kga-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* ── Messages ── */
 .kga-chat-messages {
   flex: 1;
@@ -217,6 +234,77 @@
 
 .kga-wikilink:hover {
   color: #a5b4fc;
+}
+
+/* ── Source Citations ── */
+.kga-sources {
+  margin-top: 8px;
+  border: 1px solid var(--background-modifier-border, #313244);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.kga-sources-summary {
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-muted, #6c7086);
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.kga-sources-summary:hover {
+  background: var(--background-modifier-hover, #313244);
+  color: var(--text-normal, #cdd6f4);
+}
+
+.kga-sources-list {
+  display: none;
+  border-top: 1px solid var(--background-modifier-border, #313244);
+}
+
+.kga-sources-open .kga-sources-list {
+  display: block;
+}
+
+.kga-source-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(49, 50, 68, 0.4);
+}
+
+.kga-source-item:last-child {
+  border-bottom: none;
+}
+
+.kga-source-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.kga-source-header .kga-wikilink {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.kga-source-score {
+  font-size: 10px;
+  color: var(--text-muted, #6c7086);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.kga-source-snippet {
+  font-size: 11px;
+  color: var(--text-muted, #6c7086);
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
 }
 
 /* Loading indicator */

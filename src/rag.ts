@@ -1,19 +1,23 @@
 import { App, TFile } from 'obsidian';
-import type { SearchResult } from './types';
+import type { SearchResult, IndexStatus, IndexState } from './types';
+import {
+  ChunkEntry,
+  tokenize,
+  chunkText,
+  keywordSearch,
+  rerank,
+} from './retrieval';
 
-interface ChunkEntry {
-  path: string;
-  title: string;
-  content: string;
-  /** Tokenized words for scoring */
-  tokens: Map<string, number>;
-}
+type StatusCallback = (state: IndexState) => void;
 
 /**
- * Simple TF-IDF inspired retrieval engine.
+ * Two-stage keyword + rerank retrieval engine.
  *
- * For the MVP we use term-frequency scoring against an in-memory index.
- * Later this can be replaced with embeddings + vector DB.
+ * Stage 1: TF-IDF keyword recall (broad, fast).
+ * Stage 2: Rich-signal reranker (phrase matching, proximity, title weight).
+ *
+ * Pure retrieval functions live in ./retrieval.ts for testability.
+ * This class owns the in-memory index, dfMap, and Obsidian vault I/O.
  */
 export class RAGEngine {
   private app: App;
@@ -21,6 +25,13 @@ export class RAGEngine {
   private dfMap: Map<string, number> = new Map();
   private chunkSize: number;
   private chunkOverlap: number;
+
+  // ── lifecycle state ──
+  private _status: IndexStatus = 'idle';
+  private _indexingPromise: Promise<void> | null = null;
+  private _pendingRebuild = false;
+  private _dirtyPaths: Set<string> = new Set();
+  private _callbacks: Set<StatusCallback> = new Set();
 
   constructor(app: App, chunkSize = 500, chunkOverlap = 50) {
     this.app = app;
@@ -32,25 +43,57 @@ export class RAGEngine {
     return this.index.length;
   }
 
-  /**
-   * Rebuild the full index from all markdown files in the vault.
-   */
-  async rebuildIndex(): Promise<void> {
-    this.index = [];
-    const files = this.app.vault.getMarkdownFiles();
-
-    for (const file of files) {
-      await this.indexFileInternal(file);
-    }
-
-    this.rebuildDfMap();
+  /** Whether the engine is currently indexing. */
+  get isIndexing(): boolean {
+    return this._status === 'indexing';
   }
 
-  /**
-   * Index or re-index a single file (public API).
-   */
+  // ── public status API ──
+
+  getState(): IndexState {
+    return {
+      status: this._status,
+      message: this._buildMessage(),
+      chunkCount: this.index.length,
+    };
+  }
+
+  /** Subscribe to status changes. Returns an unsubscribe function. */
+  onStatusChange(cb: StatusCallback): () => void {
+    this._callbacks.add(cb);
+    // Immediately fire current state
+    cb(this.getState());
+    return () => this._callbacks.delete(cb);
+  }
+
+  // ── public index lifecycle ──
+
+  async rebuildIndex(): Promise<void> {
+    // If already indexing, mark pending and wait for current to finish
+    if (this._status === 'indexing') {
+      this._pendingRebuild = true;
+      await this._indexingPromise;
+      // Another rebuild was already triggered by the pending flag, nothing to do
+      return;
+    }
+
+    this._doRebuild();
+    await this._indexingPromise;
+
+    // If another rebuild was requested while we ran, honor it
+    if (this._pendingRebuild) {
+      this._pendingRebuild = false;
+      await this.rebuildIndex();
+    }
+  }
+
   async indexFile(file: TFile): Promise<void> {
-    // Remove old entries from both index and dfMap
+    // During full rebuild, record dirty paths for later catch-up
+    if (this._status === 'indexing') {
+      this._dirtyPaths.add(file.path);
+      return;
+    }
+
     const oldEntries = this.index.filter(e => e.path === file.path);
     this.removeFromDfMap(oldEntries);
     this.index = this.index.filter(e => e.path !== file.path);
@@ -58,18 +101,12 @@ export class RAGEngine {
     await this.indexFileInternal(file);
   }
 
-  /**
-   * Remove a file from the index.
-   */
   removeFile(path: string): void {
     const oldEntries = this.index.filter(e => e.path === path);
     this.removeFromDfMap(oldEntries);
     this.index = this.index.filter(e => e.path !== path);
   }
 
-  /**
-   * Rename a file's entries in the index.
-   */
   renameFile(oldPath: string, newPath: string, newTitle: string): void {
     for (const entry of this.index) {
       if (entry.path === oldPath) {
@@ -80,20 +117,29 @@ export class RAGEngine {
   }
 
   /**
-   * Two-stage retrieval: keyword recall → reranker → top-k results.
+   * Update chunking parameters and trigger a rebuild.
+   * Keeps the same engine instance so status subscribers survive.
    */
+  updateChunkSettings(chunkSize: number, chunkOverlap: number): void {
+    this.chunkSize = chunkSize;
+    this.chunkOverlap = chunkOverlap;
+    this.rebuildIndex(); // fire-and-forget — UI follows status callbacks
+  }
+
+  // ── search ──
+
   search(query: string, topK = 10): SearchResult[] {
     if (this.index.length === 0) return [];
 
-    const queryTokens = this.tokenize(query);
+    const queryTokens = tokenize(query);
     if (queryTokens.size === 0) return [];
 
-    // Stage 1: TF-IDF keyword recall (top 30 or topK×3, whichever is larger)
+    // Stage 1: broad keyword recall
     const recallSize = Math.max(topK * 3, 30);
-    const candidates = this.keywordSearch(query, queryTokens, recallSize);
+    const candidates = keywordSearch(queryTokens, recallSize, this.index, this.dfMap);
 
-    // Stage 2: Rerank with phrase matching, proximity, and title bonus
-    const reranked = this.rerank(query, queryTokens, candidates);
+    // Stage 2: rich-signal rerank
+    const reranked = rerank(query, queryTokens, candidates);
 
     // Deduplicate by file path, return top-k
     const seen = new Set<string>();
@@ -113,120 +159,61 @@ export class RAGEngine {
     return results;
   }
 
-  /**
-   * Stage 1: TF-IDF keyword search with broad recall.
-   */
-  private keywordSearch(
-    query: string,
-    queryTokens: Map<string, number>,
-    recallSize: number,
-  ): { entry: ChunkEntry; score: number }[] {
-    const scored: { entry: ChunkEntry; score: number }[] = [];
-
-    for (const entry of this.index) {
-      let score = 0;
-      for (const [token, _] of queryTokens) {
-        const tf = entry.tokens.get(token);
-        if (tf !== undefined) {
-          const df = this.dfMap.get(token) ?? 0;
-          const idf = Math.log(1 + this.index.length / (df + 1));
-          score += tf * idf;
-        }
-      }
-      // Bonus for title matches
-      const titleLower = entry.title.toLowerCase();
-      for (const [token, _] of queryTokens) {
-        if (titleLower.includes(token)) {
-          score += 2.0;
-        }
-      }
-      if (score > 0) {
-        scored.push({ entry, score });
-      }
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, recallSize);
-  }
-
-  /**
-   * Stage 2: Reranker — re-scores candidates with richer signals.
-   */
-  private rerank(
-    query: string,
-    queryTokens: Map<string, number>,
-    candidates: { entry: ChunkEntry; score: number }[],
-  ): { entry: ChunkEntry; score: number }[] {
-    const queryLower = query.toLowerCase();
-
-    const reranked = candidates.map(({ entry, score }) => {
-      let finalScore = score;
-      const content = entry.content.toLowerCase();
-      const title = entry.title.toLowerCase();
-
-      // 1. Exact phrase match (strongest single signal)
-      if (content.includes(queryLower)) {
-        finalScore *= 2.5;
-      } else {
-        // Partial phrase: check consecutive token pairs
-        let phraseHits = 0;
-        const tokenList = [...queryTokens.keys()];
-        for (let i = 0; i < tokenList.length - 1; i++) {
-          const bigram = tokenList[i] + ' ' + tokenList[i + 1];
-          if (content.includes(bigram)) phraseHits++;
-        }
-        finalScore *= (1 + phraseHits * 0.4);
-      }
-
-      // 2. Token proximity bonus (closer = more relevant)
-      finalScore += this.proximityBonus(queryTokens, content);
-
-      // 3. Title match extra weight
-      for (const [token] of queryTokens) {
-        if (title.includes(token)) finalScore += 1.0;
-      }
-
-      return { entry, score: finalScore };
-    });
-
-    reranked.sort((a, b) => b.score - a.score);
-    return reranked;
-  }
-
-  /**
-   * Heuristic: tokens appearing closer together in the content = stronger signal.
-   * Returns 0–3 bonus points.
-   */
-  private proximityBonus(queryTokens: Map<string, number>, content: string): number {
-    const positions: number[] = [];
-    for (const [token] of queryTokens) {
-      const idx = content.indexOf(token);
-      if (idx !== -1) positions.push(idx);
-    }
-
-    if (positions.length < 2) return 0;
-
-    positions.sort((a, b) => a - b);
-
-    let totalGap = 0;
-    for (let i = 1; i < positions.length; i++) {
-      totalGap += positions[i] - positions[i - 1];
-    }
-    const avgGap = totalGap / (positions.length - 1);
-
-    // Closer proximity → higher bonus, capped at 3
-    return Math.max(0, 3.0 * (1 - avgGap / (content.length + 1)));
-  }
-
   // ── private helpers ──
 
-  /**
-   * Index a file's content without updating dfMap (caller handles dfMap).
-   */
+  private _doRebuild(): void {
+    this._indexingPromise = this._runRebuild();
+  }
+
+  private async _runRebuild(): Promise<void> {
+    this._status = 'indexing';
+    this._emit();
+
+    try {
+      this.index = [];
+      this.dfMap.clear();
+
+      const files = this.app.vault.getMarkdownFiles();
+      const total = files.length;
+
+      for (let i = 0; i < files.length; i++) {
+        try {
+          await this.indexFileInternal(files[i]);
+        } catch {
+          // File may have been deleted during rebuild — skip
+        }
+        // Emit progress periodically (every 10 files or every file for small vaults)
+        if (i % 10 === 0 || i === files.length - 1) {
+          this._emit(`Indexing ${i + 1}/${total} files…`);
+        }
+      }
+
+      // Catch up on files that were modified/created during the rebuild
+      if (this._dirtyPaths.size > 0) {
+        const dirtyFiles: TFile[] = [];
+        for (const path of this._dirtyPaths) {
+          const f = this.app.vault.getAbstractFileByPath(path);
+          if (f instanceof TFile) dirtyFiles.push(f);
+        }
+        this._dirtyPaths.clear();
+        for (const f of dirtyFiles) {
+          try { await this.indexFileInternal(f); } catch { /* skip */ }
+        }
+      }
+
+      this.rebuildDfMap();
+      this._status = 'ready';
+      this._emit(`Index ready (${this.index.length} chunks)`);
+    } catch (err) {
+      this._status = 'error';
+      this._emit(`Index error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async indexFileInternal(file: TFile): Promise<void> {
     const content = await this.app.vault.read(file);
     const title = file.basename;
-    const chunks = this.chunkText(content);
+    const chunks = chunkText(content, this.chunkSize, this.chunkOverlap);
 
     const newEntries: ChunkEntry[] = [];
     for (const chunk of chunks) {
@@ -235,7 +222,7 @@ export class RAGEngine {
         path: file.path,
         title,
         content: chunk,
-        tokens: this.tokenize(chunk),
+        tokens: tokenize(chunk),
       });
     }
 
@@ -243,50 +230,24 @@ export class RAGEngine {
     this.addToDfMap(newEntries);
   }
 
-  private chunkText(text: string): string[] {
-    const chunks: string[] = [];
-    const paragraphs = text.split(/\n\n+/);
-
-    let current = '';
-    for (const para of paragraphs) {
-      if (current.length + para.length > this.chunkSize && current.length > 0) {
-        chunks.push(current.trim());
-        // Keep last chunkOverlap chars as overlap seed for next chunk
-        if (this.chunkOverlap > 0 && current.length > this.chunkOverlap) {
-          current = current.slice(-this.chunkOverlap);
-        } else {
-          current = '';
-        }
-      }
-      current += (current ? '\n\n' : '') + para;
+  private _buildMessage(): string {
+    switch (this._status) {
+      case 'idle': return 'Index not yet built';
+      case 'indexing': return 'Indexing vault…';
+      case 'ready': return `Index ready (${this.index.length} chunks)`;
+      case 'error': return 'Index build failed';
     }
-    if (current.trim()) {
-      chunks.push(current.trim());
-    }
-
-    return chunks;
   }
 
-  private tokenize(text: string): Map<string, number> {
-    const tokens = new Map<string, number>();
-    // Split on non-Chinese, non-alphanumeric boundaries
-    const words = text
-      .toLowerCase()
-      .split(/[\s,.:;!?()\[\]{}"'`~@#$%^&*+=<>/\\|]+/)
-      .filter(w => w.length >= 2);
-
-    for (const word of words) {
-      tokens.set(word, (tokens.get(word) ?? 0) + 1);
+  private _emit(messageOverride?: string): void {
+    const state: IndexState = {
+      status: this._status,
+      message: messageOverride ?? this._buildMessage(),
+      chunkCount: this.index.length,
+    };
+    for (const cb of this._callbacks) {
+      try { cb(state); } catch { /* don't let one broken callback break others */ }
     }
-
-    // Also extract Chinese bigrams (simple n-gram)
-    const chineseChars = text.replace(/[^一-鿿]/g, '');
-    for (let i = 0; i < chineseChars.length - 1; i++) {
-      const bigram = chineseChars.slice(i, i + 2);
-      tokens.set(bigram, (tokens.get(bigram) ?? 0) + 1);
-    }
-
-    return tokens;
   }
 
   // ── dfMap maintenance ──

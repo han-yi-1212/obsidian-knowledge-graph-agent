@@ -167,12 +167,10 @@ export default class KnowledgeGraphAgentPlugin extends Plugin {
     this.deepseekAPI?.updateSettings(this.settings);
 
     if (chunkChanged) {
-      this.ragEngine = new RAGEngine(
-        this.app,
+      this.ragEngine.updateChunkSettings(
         this.settings.chunkSize,
         this.settings.chunkOverlap,
       );
-      this.ragEngine.rebuildIndex();
     }
 
     // Update snapshot to current persisted state

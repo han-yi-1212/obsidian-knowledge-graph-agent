@@ -124,9 +124,15 @@ export class KnowledgeGraphView extends ItemView {
     const topPaths = new Set(topNodes.map(n => n[0]));
 
     // Build edge list from links within the top node set
+    // Pre-build file map for O(1) lookup
+    const fileMap = new Map<string, TFile>();
+    for (const f of allFiles) fileMap.set(f.path, f);
+
     const edges: GraphData['edges'] = [];
+    const seenEdges = new Set<string>();
+
     for (const [path] of topNodes) {
-      const file = allFiles.find(f => f.path === path);
+      const file = fileMap.get(path);
       if (!file) continue;
       const cache = metadataCache.getFileCache(file);
       if (!cache?.links) continue;
@@ -137,7 +143,8 @@ export class KnowledgeGraphView extends ItemView {
         if (!topPaths.has(resolved.path)) continue;
 
         const edgeId = [path, resolved.path].sort().join('||');
-        if (!edges.some(e => e.id === edgeId)) {
+        if (!seenEdges.has(edgeId)) {
+          seenEdges.add(edgeId);
           edges.push({
             id: edgeId,
             source: path,

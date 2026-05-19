@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer } from 'obsidian';
 import type KnowledgeGraphAgentPlugin from '../main';
-import type { ChatMessage } from './types';
+import type { ChatMessage, IndexState, SearchResult } from './types';
 
 export const CHAT_VIEW_TYPE = 'knowledge-graph-agent-chat';
 
@@ -10,7 +10,9 @@ export class ChatView extends ItemView {
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
   private contextBadge: HTMLElement | null = null;
+  private bottomInfoEl: HTMLElement | null = null;
   private isStreaming = false;
+  private unsubStatus: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: KnowledgeGraphAgentPlugin) {
     super(leaf);
@@ -86,7 +88,7 @@ export class ChatView extends ItemView {
 
     // ── Bottom bar ──
     const bottom = root.createDiv('kga-chat-bottom');
-    bottom.createEl('span', {
+    this.bottomInfoEl = bottom.createEl('span', {
       text: `Model: ${this.plugin.settings.chatModel}`,
       cls: 'kga-chat-model-info',
     });
@@ -96,10 +98,20 @@ export class ChatView extends ItemView {
       cls: 'kga-chat-clear-btn',
     });
     clearBtn.addEventListener('click', () => this.clearChat());
+
+    // ── Subscribe to index status (after input/bottom are created so
+    //     the initial callback can disable them if index is still building)
+    this.unsubStatus = this.plugin.ragEngine.onStatusChange((state: IndexState) => {
+      this.updateIndexStatus(state);
+    });
+    // Belt-and-suspenders: if onStatusChange already fired synchronously
+    // before our callback was registered, pull current state manually.
+    this.updateIndexStatus(this.plugin.ragEngine.getState());
   }
 
   async onClose(): Promise<void> {
-    // no-op
+    this.unsubStatus?.();
+    this.unsubStatus = null;
   }
 
   // ── Public API ──
@@ -170,6 +182,7 @@ export class ChatView extends ItemView {
 
       // 1b. Read full content of user-selected context notes
       const selectedNotesContent: { title: string; content: string }[] = [];
+      const selectedSources: SearchResult[] = [];
       for (const path of this.plugin.conversationContext.selectedNotes) {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (file instanceof TFile) {
@@ -178,6 +191,12 @@ export class ChatView extends ItemView {
             selectedNotesContent.push({
               title: file.basename,
               content: content.slice(0, 2000), // cap to avoid blowing context
+            });
+            selectedSources.push({
+              path: file.path,
+              title: file.basename,
+              chunk: content.slice(0, 200),
+              score: 1.0, // pinned notes get max relevance
             });
           } catch {
             // skip unreadable files
@@ -201,6 +220,7 @@ export class ChatView extends ItemView {
       // 3. Stream response
       let streamContent = '';
       let messageEl: HTMLElement | null = null;
+      let messageWrapper: HTMLElement | null = null;
       let loadingRemoved = false;
 
       await this.plugin.deepseekAPI.chatStream(
@@ -211,7 +231,9 @@ export class ChatView extends ItemView {
             loadingRemoved = true;
           }
           if (!messageEl) {
-            messageEl = this.createMessageContainer('assistant');
+            const container = this.createMessageWrapper('assistant');
+            messageEl = container.body;
+            messageWrapper = container.wrapper;
           }
           streamContent += token;
           const rendered = this.renderMarkdownInline(streamContent);
@@ -226,8 +248,19 @@ export class ChatView extends ItemView {
             await this.renderWithObsidian(fullText, messageEl);
           }
 
+          // Merge pinned notes (first) with automatic search results
+          const allSources = [...selectedSources, ...searchResults.filter(
+            sr => !selectedSources.some(ss => ss.path === sr.path),
+          )];
+
+          // Render source citations below the message
+          if (allSources.length > 0 && messageWrapper) {
+            this.renderSources(messageWrapper, allSources);
+            this.scrollToBottom();
+          }
+
           this.plugin.chatHistory.push({ role: 'user', content: text });
-          this.plugin.chatHistory.push({ role: 'assistant', content: fullText });
+          this.plugin.chatHistory.push({ role: 'assistant', content: fullText, sources: allSources });
 
           // Trim history to last 40 messages to avoid context overflow
           if (this.plugin.chatHistory.length > 40) {
@@ -251,13 +284,14 @@ export class ChatView extends ItemView {
   }
 
   private async addMessage(role: 'user' | 'assistant', content: string): Promise<HTMLElement> {
-    const el = this.createMessageContainer(role);
-    await this.renderWithObsidian(content, el);
+    const { body } = this.createMessageWrapper(role);
+    await this.renderWithObsidian(content, body);
     this.scrollToBottom();
-    return el;
+    return body;
   }
 
-  private createMessageContainer(role: 'user' | 'assistant'): HTMLElement {
+  /** Creates a message DOM structure, returning both wrapper and body. */
+  private createMessageWrapper(role: 'user' | 'assistant'): { wrapper: HTMLElement; body: HTMLElement } {
     if (!this.messagesEl) throw new Error('Messages container not initialized');
 
     const wrapper = this.messagesEl.createDiv(`kga-message kga-message-${role}`);
@@ -265,7 +299,7 @@ export class ChatView extends ItemView {
     avatar.setText(role === 'user' ? 'U' : 'AI');
 
     const body = wrapper.createDiv('kga-message-body');
-    return body;
+    return { wrapper, body };
   }
 
   private addLoadingMessage(): HTMLElement {
@@ -279,6 +313,45 @@ export class ChatView extends ItemView {
     body.createSpan({ text: 'Thinking...', cls: 'kga-loading' });
     this.scrollToBottom();
     return body;
+  }
+
+  /**
+   * Render a collapsible "Sources (N)" section below an AI message.
+   */
+  private renderSources(wrapper: HTMLElement, sources: SearchResult[]): void {
+    const container = wrapper.createDiv('kga-sources');
+
+    // Summary bar — click to toggle
+    const summary = container.createDiv('kga-sources-summary');
+    summary.createSpan({ text: `📚 Sources (${sources.length})` });
+    summary.addEventListener('click', () => {
+      container.classList.toggle('kga-sources-open');
+    });
+
+    // Normalize scores to 0-1 for percentage display
+    const maxScore = Math.max(...sources.map(s => s.score), 0.01);
+
+    // Detail list (collapsed by default)
+    const list = container.createDiv('kga-sources-list');
+
+    for (const source of sources) {
+      const item = list.createDiv('kga-source-item');
+
+      const header = item.createDiv('kga-source-header');
+      const nameEl = header.createSpan({
+        text: source.title,
+        cls: 'kga-wikilink',
+      });
+      nameEl.setAttribute('data-note', source.title);
+      const normalized = source.score / maxScore;
+      const scoreEl = header.createSpan({
+        text: `${Math.round(normalized * 100)}%`,
+        cls: 'kga-source-score',
+      });
+
+      const snippet = item.createDiv('kga-source-snippet');
+      snippet.setText(source.chunk.slice(0, 200) + (source.chunk.length > 200 ? '…' : ''));
+    }
   }
 
   /**
@@ -355,6 +428,50 @@ export class ChatView extends ItemView {
     requestAnimationFrame(() => {
       this.messagesEl!.scrollTop = this.messagesEl!.scrollHeight;
     });
+  }
+
+  private updateIndexStatus(state: IndexState): void {
+    // Update context badge
+    if (this.contextBadge) {
+      // Remove any existing index chip
+      const existing = this.contextBadge.querySelector('.kga-context-indexing, .kga-context-error');
+      existing?.remove();
+
+      if (state.status === 'indexing') {
+        const chip = this.contextBadge.createSpan({
+          text: `🔄 ${state.message}`,
+          cls: 'kga-context-chip kga-context-indexing',
+        });
+        chip.style.animation = 'kga-pulse 1.5s ease-in-out infinite';
+      } else if (state.status === 'error') {
+        this.contextBadge.createSpan({
+          text: `⚠️ ${state.message}`,
+          cls: 'kga-context-chip kga-context-error',
+        });
+      }
+    }
+
+    // Update bottom bar
+    if (this.bottomInfoEl) {
+      const parts = [`Model: ${this.plugin.settings.chatModel}`];
+      if (state.status === 'ready') {
+        parts.push(`Index: ${state.chunkCount} chunks`);
+      }
+      this.bottomInfoEl.setText(parts.join(' · '));
+    }
+
+    // Enable/disable input based on index readiness
+    if (state.status === 'indexing' || state.status === 'idle') {
+      this.setInputEnabled(false);
+      if (this.inputEl) {
+        this.inputEl.placeholder = 'Building knowledge index…';
+      }
+    } else {
+      this.setInputEnabled(true);
+      if (this.inputEl) {
+        this.inputEl.placeholder = 'Ask about your knowledge graph...';
+      }
+    }
   }
 
   private setInputEnabled(enabled: boolean): void {

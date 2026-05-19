@@ -29,6 +29,15 @@ export const DEFAULT_SETTINGS: KnowledgeGraphAgentSettings = {
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  sources?: SearchResult[];
+}
+
+export type IndexStatus = 'idle' | 'indexing' | 'ready' | 'error';
+
+export interface IndexState {
+  status: IndexStatus;
+  message: string;
+  chunkCount: number;
 }
 
 export interface GraphNode {

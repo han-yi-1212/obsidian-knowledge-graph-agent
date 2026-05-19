@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "AI-powered knowledge graph with DeepSeek chat integration. Visualize note connections and converse with context-aware AI.",
-  "author": "",
-  "authorUrl": "",
+  "author": "han-yi-1212",
+  "authorUrl": "https://github.com/han-yi-1212",
   "isDesktopOnly": false
 }
