@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer } from 'obsidian';
 import type KnowledgeGraphAgentPlugin from '../main';
 import type { ChatMessage, IndexState, SearchResult } from './types';
+import { apiErrorMessage, API_ERROR_CODES } from './api';
 
 export const CHAT_VIEW_TYPE = 'knowledge-graph-agent-chat';
 
@@ -9,9 +10,11 @@ export class ChatView extends ItemView {
   private messagesEl: HTMLElement | null = null;
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
+  private stopBtn: HTMLButtonElement | null = null;
   private contextBadge: HTMLElement | null = null;
   private bottomInfoEl: HTMLElement | null = null;
   private isStreaming = false;
+  private abortController: AbortController | null = null;
   private unsubStatus: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: KnowledgeGraphAgentPlugin) {
@@ -76,15 +79,28 @@ export class ChatView extends ItemView {
     this.inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        this.sendMessage();
+        if (this.isStreaming) {
+          this.stopStreaming();
+        } else {
+          this.sendMessage();
+        }
       }
     });
 
+    // Send button
     this.sendBtn = inputArea.createEl('button', {
       text: 'Send',
       cls: 'kga-chat-send-btn',
     });
     this.sendBtn.addEventListener('click', () => this.sendMessage());
+
+    // Stop button (hidden by default, shown during streaming)
+    this.stopBtn = inputArea.createEl('button', {
+      text: 'Stop',
+      cls: 'kga-chat-stop-btn',
+    });
+    this.stopBtn.addEventListener('click', () => this.stopStreaming());
+    this.stopBtn.style.display = 'none';
 
     // ── Bottom bar ──
     const bottom = root.createDiv('kga-chat-bottom');
@@ -104,8 +120,6 @@ export class ChatView extends ItemView {
     this.unsubStatus = this.plugin.ragEngine.onStatusChange((state: IndexState) => {
       this.updateIndexStatus(state);
     });
-    // Belt-and-suspenders: if onStatusChange already fired synchronously
-    // before our callback was registered, pull current state manually.
     this.updateIndexStatus(this.plugin.ragEngine.getState());
   }
 
@@ -170,8 +184,7 @@ export class ChatView extends ItemView {
     await this.addMessage('user', text);
 
     const loadingEl = this.addLoadingMessage();
-    this.setInputEnabled(false);
-    this.isStreaming = true;
+    this.setStreamingState(true);
 
     try {
       // 1. Search for relevant context
@@ -190,7 +203,7 @@ export class ChatView extends ItemView {
             const content = await this.app.vault.read(file);
             selectedNotesContent.push({
               title: file.basename,
-              content: content.slice(0, 2000), // cap to avoid blowing context
+              content: content.slice(0, 2000),
             });
             selectedSources.push({
               path: file.path,
@@ -218,11 +231,13 @@ export class ChatView extends ItemView {
         { role: 'user', content: text },
       ];
 
-      // 3. Stream response
+      // 3. Stream response with abort support
       let streamContent = '';
       let messageEl: HTMLElement | null = null;
       let messageWrapper: HTMLElement | null = null;
       let loadingRemoved = false;
+
+      this.abortController = new AbortController();
 
       await this.plugin.deepseekAPI.chatStream(
         messages,
@@ -244,7 +259,7 @@ export class ChatView extends ItemView {
         },
         async (fullText) => {
           // Re-render final message with full Obsidian MarkdownRenderer
-          if (messageEl) {
+          if (messageEl && fullText) {
             messageEl.empty();
             await this.renderWithObsidian(fullText, messageEl);
           }
@@ -260,28 +275,54 @@ export class ChatView extends ItemView {
             this.scrollToBottom();
           }
 
-          this.plugin.chatHistory.push({ role: 'user', content: text });
-          this.plugin.chatHistory.push({ role: 'assistant', content: fullText, sources: allSources });
+          // Only save to history if we got meaningful output
+          if (fullText) {
+            this.plugin.chatHistory.push({ role: 'user', content: text });
+            this.plugin.chatHistory.push({ role: 'assistant', content: fullText, sources: allSources });
 
-          // Trim history to last 40 messages to avoid context overflow
-          if (this.plugin.chatHistory.length > 40) {
-            this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
+            if (this.plugin.chatHistory.length > 40) {
+              this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
+            }
           }
         },
-        (err) => {
+        (err, code) => {
           if (loadingEl) loadingEl.remove();
-          this.addMessage('assistant', `❌ Error: ${err.message}`);
+          const friendlyMsg = code ? apiErrorMessage(code) : err.message;
+          new Notice(friendlyMsg);
+          this.addMessage('assistant', `❌ ${friendlyMsg}`);
         },
+        this.abortController.signal,
       );
     } catch (err) {
       if (loadingEl) loadingEl.remove();
       const msg = err instanceof Error ? err.message : String(err);
       this.addMessage('assistant', `❌ Error: ${msg}`);
     } finally {
-      this.isStreaming = false;
-      // Re-check index state — a reindex may have started during streaming
+      this.abortController = null;
+      this.setStreamingState(false);
       this.updateIndexStatus(this.plugin.ragEngine.getState());
       this.inputEl?.focus();
+    }
+  }
+
+  private stopStreaming(): void {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+  }
+
+  /** Toggle between streaming and idle UI state. */
+  private setStreamingState(streaming: boolean): void {
+    this.isStreaming = streaming;
+    if (this.inputEl) {
+      this.inputEl.disabled = streaming;
+    }
+    if (this.sendBtn) {
+      this.sendBtn.style.display = streaming ? 'none' : '';
+    }
+    if (this.stopBtn) {
+      this.stopBtn.style.display = streaming ? '' : 'none';
     }
   }
 
@@ -319,57 +360,80 @@ export class ChatView extends ItemView {
 
   /**
    * Render a collapsible "Sources (N)" section below an AI message.
+   * Sources are grouped: Pinned first, then Retrieved with scores.
    */
   private renderSources(wrapper: HTMLElement, sources: SearchResult[]): void {
     const container = wrapper.createDiv('kga-sources');
 
-    // Summary bar — click to toggle
+    const pinnedSources = sources.filter(s => s.sourceType === 'pinned');
+    const retrievedSources = sources.filter(s => s.sourceType !== 'pinned');
+
+    // Summary bar
     const summary = container.createDiv('kga-sources-summary');
-    summary.createSpan({ text: `📚 Sources (${sources.length})` });
+    const parts: string[] = [];
+    if (pinnedSources.length > 0) parts.push(`${pinnedSources.length} Pinned`);
+    if (retrievedSources.length > 0) parts.push(`${retrievedSources.length} Retrieved`);
+    summary.createSpan({ text: `📚 Sources: ${parts.join(' + ')}` });
     summary.addEventListener('click', () => {
       container.classList.toggle('kga-sources-open');
     });
 
-    // Normalize retrieved-source scores to 0-1 for percentage display
-    const retrievedScores = sources
-      .filter(s => s.sourceType !== 'pinned')
-      .map(s => s.score);
+    // Normalize retrieved scores
+    const retrievedScores = retrievedSources.map(s => s.score);
     const maxScore = Math.max(...retrievedScores, 0.01);
 
-    // Detail list (collapsed by default)
+    // Detail list
     const list = container.createDiv('kga-sources-list');
 
-    for (const source of sources) {
-      const item = list.createDiv('kga-source-item');
+    // Pinned section
+    if (pinnedSources.length > 0) {
+      const pinnedHeader = list.createDiv('kga-sources-section-header');
+      pinnedHeader.createSpan({ text: '📌 Pinned Notes', cls: 'kga-sources-section-label' });
+      pinnedHeader.createSpan({ text: `Manually added — highest priority`, cls: 'kga-sources-section-hint' });
 
-      const header = item.createDiv('kga-source-header');
-      const nameEl = header.createSpan({
-        text: source.title,
-        cls: 'kga-wikilink',
-      });
-      nameEl.setAttribute('data-note', source.title);
-
-      if (source.sourceType === 'pinned') {
-        header.createSpan({
-          text: '📌 Pinned',
-          cls: 'kga-source-score kga-source-pinned',
-        });
-      } else {
-        const normalized = source.score / maxScore;
-        header.createSpan({
-          text: `${Math.round(normalized * 100)}%`,
-          cls: 'kga-source-score',
-        });
+      for (const source of pinnedSources) {
+        this.renderSourceItem(list, source, '📌 Pinned', 'kga-source-pinned');
       }
-
-      const snippet = item.createDiv('kga-source-snippet');
-      snippet.setText(source.chunk.slice(0, 200) + (source.chunk.length > 200 ? '…' : ''));
     }
+
+    // Retrieved section
+    if (retrievedSources.length > 0) {
+      const retrievedHeader = list.createDiv('kga-sources-section-header');
+      retrievedHeader.createSpan({ text: '🔍 Retrieved Notes', cls: 'kga-sources-section-label' });
+      retrievedHeader.createSpan({ text: `Auto-matched from your vault`, cls: 'kga-sources-section-hint' });
+
+      for (const source of retrievedSources) {
+        const normalized = source.score / maxScore;
+        this.renderSourceItem(list, source, `${Math.round(normalized * 100)}%`, '');
+      }
+    }
+  }
+
+  private renderSourceItem(
+    list: HTMLElement,
+    source: SearchResult,
+    label: string,
+    labelClass: string,
+  ): void {
+    const item = list.createDiv('kga-source-item');
+
+    const header = item.createDiv('kga-source-header');
+    const nameEl = header.createSpan({
+      text: source.title,
+      cls: 'kga-wikilink',
+    });
+    nameEl.setAttribute('data-note', source.title);
+    header.createSpan({
+      text: label,
+      cls: `kga-source-score ${labelClass}`,
+    });
+
+    const snippet = item.createDiv('kga-source-snippet');
+    snippet.setText(source.chunk.slice(0, 200) + (source.chunk.length > 200 ? '…' : ''));
   }
 
   /**
    * Lightweight streaming-safe markdown → HTML.
-   * Wikilinks rendered as clickable spans with data-note for event delegation.
    */
   private renderMarkdownInline(text: string): HTMLElement {
     const container = createSpan();
@@ -414,7 +478,6 @@ export class ChatView extends ItemView {
     );
 
     // Re-wrap wikilinks produced by Obsidian's renderer with our clickable span
-    // Obsidian renders [[note]] as <a class="internal-link"> — we add data-note for delegation
     container.querySelectorAll('a.internal-link').forEach((a) => {
       const noteName = a.getAttribute('data-href') ?? a.textContent ?? '';
       a.classList.add('kga-wikilink');
@@ -422,11 +485,7 @@ export class ChatView extends ItemView {
     });
   }
 
-  /**
-   * Try to find and open a note by its basename.
-   */
   private openNoteByName(name: string): void {
-    // Strip potential .md extension, then try to resolve
     const cleanName = name.replace(/\.md$/, '');
     const file = this.app.metadataCache.getFirstLinkpathDest(cleanName, '');
     if (file instanceof TFile) {
@@ -444,9 +503,7 @@ export class ChatView extends ItemView {
   }
 
   private updateIndexStatus(state: IndexState): void {
-    // Update context badge
     if (this.contextBadge) {
-      // Remove any existing index chip
       const existing = this.contextBadge.querySelector('.kga-context-indexing, .kga-context-error');
       existing?.remove();
 
@@ -464,7 +521,6 @@ export class ChatView extends ItemView {
       }
     }
 
-    // Update bottom bar
     if (this.bottomInfoEl) {
       const parts = [`Model: ${this.plugin.settings.chatModel}`];
       if (state.status === 'ready') {
@@ -473,13 +529,15 @@ export class ChatView extends ItemView {
       this.bottomInfoEl.setText(parts.join(' · '));
     }
 
-    // Enable/disable input based on index readiness
+    // Respect streaming state — don't re-enable input mid-stream
     if (state.status === 'indexing' || state.status === 'idle') {
-      this.setInputEnabled(false);
-      if (this.inputEl) {
-        this.inputEl.placeholder = 'Building knowledge index…';
+      if (!this.isStreaming) {
+        this.setInputEnabled(false);
+        if (this.inputEl) {
+          this.inputEl.placeholder = 'Building knowledge index…';
+        }
       }
-    } else {
+    } else if (!this.isStreaming) {
       this.setInputEnabled(true);
       if (this.inputEl) {
         this.inputEl.placeholder = 'Ask about your knowledge graph...';
@@ -498,6 +556,7 @@ export class ChatView extends ItemView {
   }
 
   clearChat(): void {
+    this.stopStreaming();
     this.plugin.chatHistory = [];
     if (this.messagesEl) {
       this.messagesEl.empty();

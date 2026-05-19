@@ -1,6 +1,29 @@
 import { requestUrl } from 'obsidian';
 import type { KnowledgeGraphAgentSettings, ChatMessage, SearchResult } from './types';
 
+// Sentinels for structured error handling — the caller maps these to user-facing messages.
+export const API_ERROR_CODES = {
+  KEY_MISSING: 'API_KEY_MISSING',
+  KEY_INVALID: 'API_KEY_INVALID',
+  RATE_LIMITED: 'API_RATE_LIMITED',
+  NETWORK: 'API_NETWORK_ERROR',
+} as const;
+
+export function apiErrorMessage(code: string): string {
+  switch (code) {
+    case API_ERROR_CODES.KEY_MISSING:
+      return 'Please configure your DeepSeek API Key in plugin settings.';
+    case API_ERROR_CODES.KEY_INVALID:
+      return 'Invalid API Key (401). Check your key in plugin settings or regenerate it at platform.deepseek.com.';
+    case API_ERROR_CODES.RATE_LIMITED:
+      return 'Rate limited by DeepSeek API (429). Please wait a moment and try again.';
+    case API_ERROR_CODES.NETWORK:
+      return 'Network error — check your internet connection and the Base URL in plugin settings.';
+    default:
+      return `API request failed. ${code}`;
+  }
+}
+
 export class DeepSeekAPI {
   private settings: KnowledgeGraphAgentSettings;
 
@@ -46,14 +69,24 @@ export class DeepSeekAPI {
   }
 
   /**
-   * Streaming chat completion. Calls onToken for each text delta, onDone when finished.
+   * Streaming chat completion.
+   *
+   * @param signal — pass an AbortSignal to allow cancellation mid-stream.
+   *                 When aborted, onDone is called with whatever text was collected so far.
    */
   async chatStream(
     messages: ChatMessage[],
     onToken: (token: string) => void,
     onDone: (fullText: string) => void,
-    onError: (err: Error) => void,
+    onError: (err: Error, code?: string) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
+    // Guard: no API key configured
+    if (!this.settings.deepseekApiKey) {
+      onError(new Error('API key not configured'), API_ERROR_CODES.KEY_MISSING);
+      return;
+    }
+
     const url = `${this.settings.deepseekBaseUrl}/v1/chat/completions`;
 
     const body = {
@@ -64,16 +97,24 @@ export class DeepSeekAPI {
       stream: true,
     };
 
+    let fullText = '';
+
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(body),
+        signal,
       });
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`API error ${response.status}: ${errText}`);
+        if (response.status === 401) {
+          throw new Error(API_ERROR_CODES.KEY_INVALID);
+        }
+        if (response.status === 429) {
+          throw new Error(API_ERROR_CODES.RATE_LIMITED);
+        }
+        throw new Error(`API error ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -82,7 +123,6 @@ export class DeepSeekAPI {
       }
 
       const decoder = new TextDecoder();
-      let fullText = '';
       let buffer = '';
 
       while (true) {
@@ -114,7 +154,28 @@ export class DeepSeekAPI {
 
       onDone(fullText);
     } catch (err) {
-      onError(err instanceof Error ? err : new Error(String(err)));
+      // Aborted mid-stream — finish gracefully with partial text
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        onDone(fullText);
+        return;
+      }
+
+      // Already a structured error code
+      if (err instanceof Error && Object.values(API_ERROR_CODES).includes(err.message as any)) {
+        onError(err, err.message);
+        return;
+      }
+
+      // Network / fetch errors
+      const isNetworkError =
+        err instanceof TypeError ||
+        (err instanceof Error && err.message.includes('fetch'));
+
+      if (isNetworkError) {
+        onError(new Error('Network error'), API_ERROR_CODES.NETWORK);
+      } else {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }
 
