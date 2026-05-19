@@ -15,7 +15,7 @@ export interface KnowledgeGraphAgentSettings {
 export const DEFAULT_SETTINGS: KnowledgeGraphAgentSettings = {
   deepseekApiKey: '',
   deepseekBaseUrl: 'https://api.deepseek.com',
-  chatModel: 'deepseek-chat',
+  chatModel: 'deepseek-v4-pro',
   embeddingModel: 'deepseek-embed',
   temperature: 0.7,
   maxTokens: 4096,

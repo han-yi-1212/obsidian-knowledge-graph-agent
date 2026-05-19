@@ -82,7 +82,7 @@ Copy `main.js`, `styles.css`, and `manifest.json` into `.obsidian/plugins/knowle
 |---|---|---|
 | **DeepSeek API Key** | Your API key from [platform.deepseek.com](https://platform.deepseek.com) | — |
 | **Base URL** | API endpoint (supports custom proxies) | `https://api.deepseek.com` |
-| **Chat Model** | Model used for chat | `deepseek-chat` |
+| **Chat Model** | Model used for chat | `deepseek-v4-pro` |
 | **Temperature** | Response creativity (0 = precise, 2 = creative) | 0.7 |
 | **Max Tokens** | Maximum response length | 4096 |
 | **Max Context Chunks** | Retrieved note snippets per query | 10 |

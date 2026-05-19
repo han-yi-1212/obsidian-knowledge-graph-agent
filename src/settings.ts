@@ -45,6 +45,7 @@ export class KnowledgeGraphAgentSettingTab extends PluginSettingTab {
       .setName('Chat Model')
       .setDesc('Model to use for chat completions')
       .addDropdown(dropdown => dropdown
+        .addOption('deepseek-v4-pro', 'DeepSeek V4 Pro')
         .addOption('deepseek-chat', 'DeepSeek Chat (V3)')
         .addOption('deepseek-reasoner', 'DeepSeek Reasoner (R1)')
         .setValue(this.plugin.settings.chatModel)

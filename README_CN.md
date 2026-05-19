@@ -82,7 +82,7 @@ npm run release:zip  # 打包为 release zip
 |---|---|---|
 | **DeepSeek API Key** | 从 [platform.deepseek.com](https://platform.deepseek.com) 获取 | — |
 | **Base URL** | API 端点地址，支持自定义代理 | `https://api.deepseek.com` |
-| **Chat Model** | 使用的聊天模型 | `deepseek-chat` |
+| **Chat Model** | 使用的聊天模型 | `deepseek-v4-pro` |
 | **Temperature** | 回复的创造性（0 = 严谨，2 = 发散） | 0.7 |
 | **Max Tokens** | 单次回复最大 token 数 | 4096 |
 | **Max Context Chunks** | 每次查询检索的笔记片段数 | 10 |
