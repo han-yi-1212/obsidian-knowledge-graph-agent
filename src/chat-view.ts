@@ -196,7 +196,8 @@ export class ChatView extends ItemView {
               path: file.path,
               title: file.basename,
               chunk: content.slice(0, 200),
-              score: 1.0, // pinned notes get max relevance
+              score: 0,
+              sourceType: 'pinned',
             });
           } catch {
             // skip unreadable files
@@ -278,7 +279,8 @@ export class ChatView extends ItemView {
       this.addMessage('assistant', `❌ Error: ${msg}`);
     } finally {
       this.isStreaming = false;
-      this.setInputEnabled(true);
+      // Re-check index state — a reindex may have started during streaming
+      this.updateIndexStatus(this.plugin.ragEngine.getState());
       this.inputEl?.focus();
     }
   }
@@ -328,8 +330,11 @@ export class ChatView extends ItemView {
       container.classList.toggle('kga-sources-open');
     });
 
-    // Normalize scores to 0-1 for percentage display
-    const maxScore = Math.max(...sources.map(s => s.score), 0.01);
+    // Normalize retrieved-source scores to 0-1 for percentage display
+    const retrievedScores = sources
+      .filter(s => s.sourceType !== 'pinned')
+      .map(s => s.score);
+    const maxScore = Math.max(...retrievedScores, 0.01);
 
     // Detail list (collapsed by default)
     const list = container.createDiv('kga-sources-list');
@@ -343,11 +348,19 @@ export class ChatView extends ItemView {
         cls: 'kga-wikilink',
       });
       nameEl.setAttribute('data-note', source.title);
-      const normalized = source.score / maxScore;
-      const scoreEl = header.createSpan({
-        text: `${Math.round(normalized * 100)}%`,
-        cls: 'kga-source-score',
-      });
+
+      if (source.sourceType === 'pinned') {
+        header.createSpan({
+          text: '📌 Pinned',
+          cls: 'kga-source-score kga-source-pinned',
+        });
+      } else {
+        const normalized = source.score / maxScore;
+        header.createSpan({
+          text: `${Math.round(normalized * 100)}%`,
+          cls: 'kga-source-score',
+        });
+      }
 
       const snippet = item.createDiv('kga-source-snippet');
       snippet.setText(source.chunk.slice(0, 200) + (source.chunk.length > 200 ? '…' : ''));

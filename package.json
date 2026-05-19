@@ -8,7 +8,8 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "lint": "eslint src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release:zip": "npm run build && mkdir -p release && rm -f release/obsidian-knowledge-graph-agent.zip && zip -j release/obsidian-knowledge-graph-agent.zip main.js styles.css manifest.json && echo '=== Release zip contents ===' && unzip -l release/obsidian-knowledge-graph-agent.zip"
   },
   "keywords": [
     "obsidian",
@@ -17,7 +18,7 @@
     "deepseek",
     "ai"
   ],
-  "author": "",
+  "author": "han-yi-1212",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",

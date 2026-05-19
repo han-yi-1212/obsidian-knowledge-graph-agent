@@ -297,6 +297,12 @@
   white-space: nowrap;
 }
 
+.kga-source-pinned {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
 .kga-source-snippet {
   font-size: 11px;
   color: var(--text-muted, #6c7086);

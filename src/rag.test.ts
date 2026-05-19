@@ -223,7 +223,6 @@ describe('RAGEngine concurrent rebuild', () => {
 
 describe('RAGEngine dirty file tracking', () => {
   it('records dirty paths when indexFile called during rebuild', async () => {
-    // Create engine with lots of files so rebuild takes long enough to catch
     const files: { path: string; basename: string; content: string }[] = [];
     for (let i = 0; i < 50; i++) {
       files.push({
@@ -233,23 +232,60 @@ describe('RAGEngine dirty file tracking', () => {
       });
     }
     const app = createMockApp(files);
-
     const engine = new RAGEngine(app, 500, 50);
+
     const dirtyFile = { path: 'dirty.md', basename: 'Dirty', extension: 'md' } as any;
-
-    // Start rebuild (don't await yet)
     const rebuildPromise = engine.rebuildIndex();
-
-    // While indexing, simulate a file modification
     await engine.indexFile(dirtyFile as any);
-
-    // Wait for rebuild
     await rebuildPromise;
 
-    // The dirty file should not appear (we didn't add it to the vault mock)
-    // but the rebuild should still complete successfully
+    // Build completes even though dirty file wasn't in the vault mock
     expect(engine.getState().status).toBe('ready');
     expect(engine.isIndexing).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════
+// replaceFileInIndex (dedup on re-index)
+// ═══════════════════════════════════════════════
+
+describe('RAGEngine replaceFileInIndex', () => {
+  it('removes old chunks and indexes new content without duplication', async () => {
+    const app = createMockApp([
+      { path: 'note.md', basename: 'Note', content: 'hello world machine learning' },
+    ]);
+    const engine = new RAGEngine(app, 500, 0);
+
+    await engine.rebuildIndex();
+    const sizeAfterFirstBuild = engine.indexSize;
+    expect(sizeAfterFirstBuild).toBeGreaterThan(0);
+
+    // Simulate file modification: change what vault.read returns for this file
+    app.vault.read = vi.fn((file: { path: string }) => {
+      if (file.path === 'note.md') return Promise.resolve('goodbye world deep learning');
+      return Promise.resolve('');
+    });
+
+    // Trigger re-index — this must remove old chunks first
+    const file = { path: 'note.md', basename: 'Note', extension: 'md' } as any;
+    await engine.indexFile(file);
+
+    // Index size should NOT double (no duplicate chunks)
+    const sizeAfterReindex = engine.indexSize;
+    expect(sizeAfterReindex).toBeLessThanOrEqual(sizeAfterFirstBuild + 1);
+
+    // Old content should not match
+    const resultsForOld = engine.search('hello');
+    const oldPaths = resultsForOld.filter(r => r.path === 'note.md');
+    expect(oldPaths.length).toBe(0);
+
+    // New content should be searchable
+    const resultsForNew = engine.search('goodbye');
+    const newHits = resultsForNew.filter(r => r.path === 'note.md');
+    expect(newHits.length).toBeGreaterThan(0);
+
+    // Engine state should still be ready
+    expect(engine.getState().status).toBe('ready');
   });
 });
 

@@ -64,6 +64,7 @@ export interface SearchResult {
   title: string;
   chunk: string;
   score: number;
+  sourceType?: 'pinned' | 'retrieved';
 }
 
 export interface ConversationContext {

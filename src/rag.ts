@@ -94,11 +94,7 @@ export class RAGEngine {
       return;
     }
 
-    const oldEntries = this.index.filter(e => e.path === file.path);
-    this.removeFromDfMap(oldEntries);
-    this.index = this.index.filter(e => e.path !== file.path);
-
-    await this.indexFileInternal(file);
+    await this.replaceFileInIndex(file);
   }
 
   removeFile(path: string): void {
@@ -152,6 +148,7 @@ export class RAGEngine {
         title: entry.title,
         chunk: entry.content,
         score: Math.round(score * 100) / 100,
+        sourceType: 'retrieved',
       });
       if (results.length >= topK) break;
     }
@@ -197,7 +194,7 @@ export class RAGEngine {
         }
         this._dirtyPaths.clear();
         for (const f of dirtyFiles) {
-          try { await this.indexFileInternal(f); } catch { /* skip */ }
+          try { await this.replaceFileInIndex(f); } catch { /* skip */ }
         }
       }
 
@@ -228,6 +225,15 @@ export class RAGEngine {
 
     this.index.push(...newEntries);
     this.addToDfMap(newEntries);
+  }
+
+  /** Remove old entries for a file, then re-index it. */
+  private async replaceFileInIndex(file: TFile): Promise<void> {
+    const oldEntries = this.index.filter(e => e.path === file.path);
+    this.removeFromDfMap(oldEntries);
+    this.index = this.index.filter(e => e.path !== file.path);
+
+    await this.indexFileInternal(file);
   }
 
   private _buildMessage(): string {
