@@ -2,6 +2,14 @@ import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer, MarkdownView 
 import type KnowledgeGraphAgentPlugin from '../main';
 import type { ChatMessage, IndexState, SearchResult } from './types';
 import { apiErrorMessage, API_ERROR_CODES } from './api';
+import { DraftPreviewModal } from './draft-preview-modal';
+import {
+  parseDraftsFromResponse,
+  validateDrafts,
+  checkConflicts,
+  createNotesFromDrafts,
+  summarizeResults,
+} from './note-drafts';
 
 export const CHAT_VIEW_TYPE = 'knowledge-graph-agent-chat';
 
@@ -47,6 +55,8 @@ export class ChatView extends ItemView {
   private isStreaming = false;
   private abortController: AbortController | null = null;
   private unsubStatus: (() => void) | null = null;
+  private isDraftMode = false;
+  private draftToggleBtn: HTMLButtonElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: KnowledgeGraphAgentPlugin) {
     super(leaf);
@@ -132,6 +142,16 @@ export class ChatView extends ItemView {
     });
     this.stopBtn.addEventListener('click', () => this.stopStreaming());
     this.stopBtn.style.display = 'none';
+
+    // Draft mode toggle
+    this.draftToggleBtn = inputArea.createEl('button', {
+      text: '📝',
+      cls: 'kga-draft-toggle-btn',
+    });
+    this.draftToggleBtn.setAttr('title', 'Draft notes mode — AI generates structured note drafts for review');
+    this.draftToggleBtn.addEventListener('click', () => {
+      this.setDraftMode(!this.isDraftMode);
+    });
 
     // ── Bottom bar ──
     const bottom = root.createDiv('kga-chat-bottom');
@@ -262,11 +282,83 @@ export class ChatView extends ItemView {
         { role: 'user', content: text },
       ];
 
-      // 3. Stream response with abort support
-      let streamContent = '';
-      let messageEl: HTMLElement | null = null;
-      let messageWrapper: HTMLElement | null = null;
-      let loadingRemoved = false;
+      // 3. Branch: draft mode (non-streaming JSON) vs normal (streaming)
+      if (this.isDraftMode) {
+        // ── Draft mode: non-streaming JSON response ──
+        if (loadingEl) {
+          loadingEl.empty();
+          loadingEl.createSpan({ text: 'Generating drafts...', cls: 'kga-loading' });
+        }
+
+        const draftSystemPrompt = this.plugin.deepseekAPI.buildDraftSystemPrompt(
+          searchResults,
+          this.plugin.getActiveNoteTitle(),
+          selectedNotesContent.length > 0 ? selectedNotesContent : undefined,
+        );
+
+        const draftMessages: ChatMessage[] = [
+          { role: 'system', content: draftSystemPrompt },
+          ...this.plugin.chatHistory,
+          { role: 'user', content: text },
+        ];
+
+        try {
+          const response = await this.plugin.deepseekAPI.chat(draftMessages);
+
+          if (loadingEl) loadingEl.remove();
+
+          const drafts = parseDraftsFromResponse(response);
+          const errors = validateDrafts(drafts ?? []);
+
+          if (drafts && drafts.length > 0 && errors.length === 0) {
+            const conflicts = checkConflicts(drafts, this.app);
+
+            // Show preview modal, create on confirm
+            const handleConfirm = async (selected: typeof drafts) => {
+              const results = await createNotesFromDrafts(
+                selected,
+                this.app,
+                this.plugin.ragEngine,
+              );
+              const summary = summarizeResults(results);
+              await this.addMessage('assistant', summary);
+              this.plugin.chatHistory.push({ role: 'user', content: text });
+              this.plugin.chatHistory.push({ role: 'assistant', content: summary });
+
+              if (this.plugin.chatHistory.length > 40) {
+                this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
+              }
+            };
+
+            new DraftPreviewModal(this.app, drafts, conflicts, handleConfirm).open();
+          } else {
+            // JSON parse or validation failed — show raw response as normal text
+            if (errors.length > 0) {
+              const errorText = errors.map(e => `- ${e.message}`).join('\n');
+              await this.addMessage('assistant', `⚠️ Draft validation issues:\n\n${errorText}\n\n<details><summary>Raw AI response</summary>\n\n${response}\n</details>`);
+            } else {
+              await this.addMessage('assistant', response);
+            }
+            this.plugin.chatHistory.push({ role: 'user', content: text });
+            this.plugin.chatHistory.push({ role: 'assistant', content: response });
+
+            if (this.plugin.chatHistory.length > 40) {
+              this.plugin.chatHistory = this.plugin.chatHistory.slice(-40);
+            }
+          }
+        } catch (err) {
+          if (loadingEl) loadingEl.remove();
+          const msg = err instanceof Error ? err.message : String(err);
+          this.addMessage('assistant', `❌ Draft error: ${msg}`);
+        }
+
+        this.setDraftMode(false);
+      } else {
+        // ── Normal mode: streaming response ──
+        let streamContent = '';
+        let messageEl: HTMLElement | null = null;
+        let messageWrapper: HTMLElement | null = null;
+        let loadingRemoved = false;
 
       this.abortController = new AbortController();
 
@@ -368,6 +460,7 @@ export class ChatView extends ItemView {
         },
         this.abortController.signal,
       );
+      } // end else (normal streaming mode)
     } catch (err) {
       if (loadingEl) loadingEl.remove();
       const msg = err instanceof Error ? err.message : String(err);
@@ -404,6 +497,24 @@ export class ChatView extends ItemView {
     }
     if (this.stopBtn) {
       this.stopBtn.style.display = streaming ? '' : 'none';
+    }
+  }
+
+  private setDraftMode(on: boolean): void {
+    this.isDraftMode = on;
+    if (this.draftToggleBtn) {
+      if (on) {
+        this.draftToggleBtn.addClass('kga-draft-toggle-active');
+      } else {
+        this.draftToggleBtn.removeClass('kga-draft-toggle-active');
+      }
+    }
+    if (this.inputEl) {
+      if (on) {
+        this.inputEl.setAttr('placeholder', 'Describe the notes you want to draft…');
+      } else {
+        this.inputEl.setAttr('placeholder', 'Ask about your knowledge graph...');
+      }
     }
   }
 

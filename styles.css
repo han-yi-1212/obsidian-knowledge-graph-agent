@@ -505,6 +505,168 @@
   background: rgba(16, 185, 129, 0.08);
 }
 
+/* ── Draft Mode Toggle ── */
+.kga-draft-toggle-btn {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border, #45475a);
+  border-radius: 8px;
+  background: var(--background-primary, #1e1e2e);
+  color: var(--text-muted, #6c7086);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.kga-draft-toggle-btn:hover {
+  background: var(--background-modifier-hover, #313244);
+  color: var(--text-normal, #cdd6f4);
+}
+
+.kga-draft-toggle-active {
+  background: rgba(99, 102, 241, 0.2) !important;
+  color: #818cf8 !important;
+  border-color: rgba(99, 102, 241, 0.4) !important;
+}
+
+/* ── Draft Preview Modal ── */
+.kga-draft-preview {
+  max-width: 560px;
+  min-width: 420px;
+}
+
+.kga-draft-preview h3 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+}
+
+.kga-draft-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+
+.kga-draft-item {
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--background-modifier-border, #313244);
+  border-radius: 8px;
+  background: var(--background-secondary, #181825);
+}
+
+.kga-draft-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.kga-draft-item-header input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.kga-draft-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-normal, #cdd6f4);
+  flex: 1;
+}
+
+.kga-draft-item-folder {
+  font-size: 11px;
+  color: var(--text-muted, #6c7086);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.kga-draft-item-conflict {
+  font-size: 11px;
+  color: #fbbf24;
+  margin-bottom: 6px;
+  padding-left: 24px;
+}
+
+.kga-draft-item-ok {
+  font-size: 10px;
+  color: var(--text-faint, #6c7086);
+  margin-bottom: 6px;
+  padding-left: 24px;
+}
+
+.kga-draft-item-preview {
+  font-size: 11px;
+  color: var(--text-muted, #6c7086);
+  line-height: 1.5;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--background-primary, #1e1e2e);
+  border-radius: 4px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+
+.kga-draft-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border, #313244);
+}
+
+.kga-draft-create-all-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: var(--interactive-accent, #6366f1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.kga-draft-create-all-btn:hover {
+  background: #4f46e5;
+}
+
+.kga-draft-create-selected-btn {
+  padding: 8px 20px;
+  border: 1px solid var(--interactive-accent, #6366f1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--interactive-accent, #818cf8);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.kga-draft-create-selected-btn:hover {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.kga-draft-cancel-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--background-modifier-border, #45475a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #6c7086);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.kga-draft-cancel-btn:hover {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
 /* ══════════════════════════════════════════════════════════════
    Cytoscape overrides for Obsidian theme
    ══════════════════════════════════════════════════════════════ */

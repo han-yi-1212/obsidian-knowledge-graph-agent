@@ -32,6 +32,13 @@
   - **📎 Append to active note** — Appends the response to the end of the currently open note.
 - Command **"Save last AI response to note"** saves the most recent AI reply without clicking a button.
 
+### Draft Notes (Batch Creation)
+- **📝 Draft mode toggle** — Click the 📝 button next to the chat input to enter draft mode. The AI will generate structured note drafts as JSON.
+- **Plan → Preview → Confirm** — Describe what notes you want (e.g. "Create 5 atomic notes from my knowledge management research"). The AI returns a list of drafts. A preview modal shows each title, target folder, content snippet, and any file name conflicts.
+- **Select and create** — Check/uncheck individual drafts. Click **Create all** or **Create selected**. Notes are created in the target folder (default `AI Notes/`). Duplicate names auto-increment (`-2`, `-3`…).
+- **Safe by design** — The AI never writes files directly. The plugin validates every draft, shows you exactly what will be created, and only creates files after you confirm.
+- New notes are automatically indexed into the RAG engine for future searches.
+
 ### Context Management
 - Right-click a graph node → Add to chat context.
 - Click a context badge to remove it.
@@ -110,6 +117,7 @@ Copy `main.js`, `styles.css`, and `manifest.json` into `.obsidian/plugins/knowle
 - **Cross-note connections** — "How do A and B relate to each other?" The AI analyzes links across your notes.
 - **Stop anytime** — Press Stop or Enter during streaming to cancel. Partial output is preserved.
 - **Save good responses** — Click **💾 Save to note** to capture the answer as a permanent note, or **📎 Append** to add it to your daily note.
+- **Batch draft notes** — Click **📝** then describe the notes you want. The AI generates structured drafts, you review and confirm, then they're created in bulk.
 
 ### Reading Source Citations
 

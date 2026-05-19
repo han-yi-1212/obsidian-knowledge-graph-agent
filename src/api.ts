@@ -217,4 +217,68 @@ You help the user understand and connect their notes. Answer questions based on 
 
     return prompt;
   }
+
+  /**
+   * Build a system prompt for draft-note generation mode.
+   * The AI is instructed to respond ONLY with a JSON object containing a "notes" array.
+   */
+  buildDraftSystemPrompt(
+    searchResults: SearchResult[],
+    activeNoteTitle: string | null,
+    selectedNotesContent?: { title: string; content: string }[],
+  ): string {
+    let prompt = `You are a note-drafting assistant for an Obsidian knowledge graph. Your task is to generate structured note drafts based on the user's request.
+
+## Output Format
+
+Respond with a JSON object containing a "notes" array. Each note must have:
+- "title": A concise, descriptive title (no file extension). No illegal filename characters (\\ / : * ? " < > |).
+- "folder": Target subfolder (default "AI Notes").
+- "content": Full markdown body of the note. Use headings, lists, and [[wikilinks]] to connect to other notes.
+- "links": Optional array of related note titles (for wikilink suggestions).
+
+\`\`\`json
+{
+  "notes": [
+    {
+      "title": "Atomic Note Title",
+      "folder": "AI Notes",
+      "content": "# Atomic Note Title\\n\\nContent here with [[links]] to other notes.\\n",
+      "links": ["Related Note A", "Related Note B"]
+    }
+  ]
+}
+\`\`\`
+
+## Rules
+- Each note should be atomic — focused on a single concept.
+- Content must be complete, self-contained markdown.
+- Use [[wikilinks]] to reference other notes mentioned in context.
+- Do NOT include the JSON inside markdown code fences unless the user asked for code.
+- Output ONLY the JSON object. No explanatory text before or after.
+
+`;
+
+    if (activeNoteTitle) {
+      prompt += `The user currently has "${activeNoteTitle}" open.\n`;
+    }
+
+    if (selectedNotesContent && selectedNotesContent.length > 0) {
+      prompt += `\n## User-Selected Notes (primary context — prioritize these)\n\n`;
+      for (const n of selectedNotesContent) {
+        prompt += `### [[${n.title}]]\n${n.content}\n\n`;
+      }
+    }
+
+    if (searchResults.length > 0) {
+      prompt += `\n## Automatically Retrieved Notes (use as reference)\n\n`;
+      for (const r of searchResults) {
+        prompt += `### [[${r.title}]]\n${r.chunk}\n\n`;
+      }
+    }
+
+    prompt += `\nGenerate the notes now. Remember: output ONLY the JSON object.`;
+
+    return prompt;
+  }
 }
