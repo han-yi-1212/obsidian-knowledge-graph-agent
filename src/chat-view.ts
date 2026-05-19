@@ -1,9 +1,40 @@
-import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, Notice, MarkdownRenderer, MarkdownView } from 'obsidian';
 import type KnowledgeGraphAgentPlugin from '../main';
 import type { ChatMessage, IndexState, SearchResult } from './types';
 import { apiErrorMessage, API_ERROR_CODES } from './api';
 
 export const CHAT_VIEW_TYPE = 'knowledge-graph-agent-chat';
+
+function slugify(text: string, maxLen = 50): string {
+  return text
+    .replace(/[\s\n\r]+/g, ' ')
+    .replace(/[\\/:*?"<>|#^\[\]{}]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, maxLen)
+    .trim()
+    .replace(/\.+$/, '')
+    || 'AI Response';
+}
+
+function formatResponseBlock(
+  question: string,
+  response: string,
+  sources?: SearchResult[],
+): string {
+  let block = `\n\n---\n\n## 💬 AI Response re: "${slugify(question, 60)}"\n\n${response}\n`;
+
+  if (sources && sources.length > 0) {
+    block += `\n> [!note]- Sources\n`;
+    for (const s of sources) {
+      const label = s.sourceType === 'pinned' ? 'Pinned' : 'Retrieved';
+      block += `> - [[${s.title}]] (${label})\n`;
+    }
+  }
+
+  block += '\n---\n\n';
+  return block;
+}
 
 export class ChatView extends ItemView {
   private plugin: KnowledgeGraphAgentPlugin;
@@ -281,14 +312,34 @@ export class ChatView extends ItemView {
               this.renderSources(messageWrapper, allSources);
             }
 
-            // Save-to-note button
+            // Action buttons row
             if (messageWrapper) {
-              const saveBtn = messageWrapper.createEl('button', {
+              const actions = messageWrapper.createDiv('kga-message-actions');
+
+              const saveBtn = actions.createEl('button', {
                 text: '💾 Save to note',
                 cls: 'kga-save-note-btn',
               });
-              saveBtn.addEventListener('click', () => {
-                this.saveResponseToNote(text, fullText, allSources);
+              saveBtn.addEventListener('click', async () => {
+                saveBtn.disabled = true;
+                saveBtn.setText('✅ Saved');
+                await this.saveResponseToNote(text, fullText, allSources);
+              });
+
+              const insertBtn = actions.createEl('button', {
+                text: '↩ Insert into active note',
+                cls: 'kga-save-note-btn',
+              });
+              insertBtn.addEventListener('click', () => {
+                this.insertIntoActiveNote(text, fullText, allSources);
+              });
+
+              const appendBtn = actions.createEl('button', {
+                text: '📎 Append to active note',
+                cls: 'kga-save-note-btn',
+              });
+              appendBtn.addEventListener('click', () => {
+                this.appendToActiveNote(text, fullText, allSources);
               });
             }
 
@@ -590,9 +641,8 @@ export class ChatView extends ItemView {
     response: string,
     sources?: SearchResult[],
   ): Promise<void> {
-    const titleBase = question.slice(0, 50).replace(/[\\/:*?"<>|]/g, '').trim() || 'AI Response';
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const title = `${titleBase} - ${timestamp}`;
+    const dir = 'AI Responses/';
+    const titleBase = slugify(question) || 'AI Response';
 
     let content = `# ${titleBase}\n\n`;
     content += `## Question\n\n${question}\n\n`;
@@ -607,16 +657,51 @@ export class ChatView extends ItemView {
       content += '\n';
     }
 
-    const filePath = `${title}.md`;
-    const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing) {
-      new Notice(`Note already exists: ${filePath}`);
-      return;
+    // Dedup: if titleBase.md exists, try "titleBase - 2.md", "titleBase - 3.md", …
+    let fileName = titleBase;
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(`${dir}${fileName}.md`)) {
+      fileName = `${titleBase} - ${suffix}`;
+      suffix++;
     }
 
+    const filePath = `${dir}${fileName}.md`;
     const file = await this.app.vault.create(filePath, content);
     await this.app.workspace.openLinkText(file.path, '', false);
     new Notice(`Saved: ${file.path}`);
+  }
+
+  insertIntoActiveNote(
+    question: string,
+    response: string,
+    sources?: SearchResult[],
+  ): void {
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!activeView) {
+      new Notice('No active note to insert into.');
+      return;
+    }
+    const text = formatResponseBlock(question, response, sources);
+    const cursor = activeView.editor.getCursor();
+    activeView.editor.replaceRange(text, cursor);
+    new Notice('Inserted AI response at cursor.');
+  }
+
+  appendToActiveNote(
+    question: string,
+    response: string,
+    sources?: SearchResult[],
+  ): void {
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!activeView) {
+      new Notice('No active note to append to.');
+      return;
+    }
+    const text = formatResponseBlock(question, response, sources);
+    const editor = activeView.editor;
+    const lastLine = editor.lastLine();
+    editor.replaceRange(text, { line: lastLine, ch: editor.getLine(lastLine).length });
+    new Notice('Appended AI response to note.');
   }
 
   clearChat(): void {

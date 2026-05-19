@@ -25,6 +25,13 @@
 - **🔍 Retrieved** — Automatically matched notes show a normalized relevance percentage (0%–100%) and content snippet.
 - Click any note name to open it directly.
 
+### Save to Note
+- Each AI response has action buttons below it:
+  - **💾 Save to note** — Creates a new note in `AI Responses/` with the question, full response, and source citations. File name is slugified from the question. Duplicates auto-increment (`-2`, `-3`…).
+  - **↩ Insert into active note** — Inserts the response (with sources) at the current cursor position in the currently open note.
+  - **📎 Append to active note** — Appends the response to the end of the currently open note.
+- Command **"Save last AI response to note"** saves the most recent AI reply without clicking a button.
+
 ### Context Management
 - Right-click a graph node → Add to chat context.
 - Click a context badge to remove it.
@@ -102,6 +109,7 @@ Copy `main.js`, `styles.css`, and `manifest.json` into `.obsidian/plugins/knowle
 - **Pin context first** — Right-click a few key notes to pin them, then ask. The AI will prioritize those notes.
 - **Cross-note connections** — "How do A and B relate to each other?" The AI analyzes links across your notes.
 - **Stop anytime** — Press Stop or Enter during streaming to cancel. Partial output is preserved.
+- **Save good responses** — Click **💾 Save to note** to capture the answer as a permanent note, or **📎 Append** to add it to your daily note.
 
 ### Reading Source Citations
 
