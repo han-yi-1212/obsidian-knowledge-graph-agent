@@ -1,24 +1,54 @@
 # Knowledge Graph Agent
 
-AI-powered knowledge graph for Obsidian with DeepSeek chat integration. Visualize your note connections and converse with a context-aware AI assistant that searches your vault to ground its answers.
+> Obsidian plugin — visualize your notes as an interactive knowledge graph and chat with AI that understands your vault.
+
+[中文](./README_CN.md)
 
 ## Features
 
-- **Interactive knowledge graph** — Visualize note links as a force-directed graph. Double-click nodes to open notes, right-click for context menu.
-- **AI chat with RAG** — Ask questions about your vault. The plugin retrieves relevant notes and injects them as context, so the AI answers are grounded in your own writing.
-- **Two-stage retrieval** — Keyword recall followed by rich-signal reranking (phrase matching, proximity, title weighting) for high-quality search results.
-- **Source citations** — Every AI response shows which notes were used, with relevance scores and content previews. Click a source to open the note.
-- **Streaming with stop** — Chat replies stream token-by-token via DeepSeek API. Press Stop or Enter to cancel mid-stream.
-- **Friendly error handling** — Clear messages for missing API key, invalid key (401), rate limiting (429), and network errors.
-- **Context pinning** — Right-click graph nodes to pin notes to the chat context. The AI prioritizes pinned notes when answering.
+### Knowledge Graph
+- **Force-directed layout** — Cytoscape.js renders `[[wikilinks]]` as an interactive graph. Node size reflects total link count (outgoing + backlinks).
+- **Node search** — Type in the toolbar to highlight matching nodes and dim the rest.
+- **Node interactions** — Double-click opens the note. Right-click shows a context menu (Open, Open in new pane, Add to chat context).
+- **Large vault ready** — Pre-built `Map`/`Set` for O(1) lookups and deduplication. Refresh stays responsive even with hundreds of notes.
+- **Configurable** — Cap nodes with `Graph Max Nodes`. Toggle orphan visibility with `Show Orphans`.
+
+### AI Chat
+- **RAG-powered** — Every question triggers a vault search. Relevant notes are injected into the AI context so answers are grounded in your own writing.
+- **Two-stage retrieval** — Keyword recall (TF-IDF) followed by rich-signal reranking (phrase matching, token proximity, title weighting).
+- **Streaming** — Responses stream token-by-token via the DeepSeek API.
+- **Stop / Cancel** — Click Stop or press Enter to abort mid-stream at any time.
+
+### Source Citations
+- Collapsible `📚 Sources` section appears below every AI response.
+- **📌 Pinned** — Manually added notes show a Pinned badge. The AI prioritizes these.
+- **🔍 Retrieved** — Automatically matched notes show a normalized relevance percentage (0%–100%) and content snippet.
+- Click any note name to open it directly.
+
+### Context Management
+- Right-click a graph node → Add to chat context.
+- Click a context badge to remove it.
+- The currently open note is automatically tracked as context.
+
+### Index Lifecycle
+- **Progress display** — Shows `Indexing 45/120 files…` on startup. Chat input is disabled until indexing completes.
+- **File watchers** — Create, modify, delete, and rename events update the index incrementally.
+- **Dirty file tracking** — Edits made during a full rebuild are not lost; they are re-indexed after the build finishes.
+- **Hot settings** — Changing Chunk Size or Chunk Overlap triggers an automatic rebuild without restarting.
+
+### Error Handling
+- Missing API key → prompts you to configure one in settings
+- Invalid key (401) → suggests checking or regenerating your key
+- Rate limited (429) → asks you to wait and retry
+- Network failure → suggests checking your connection and Base URL
 
 ## Installation
 
-### Manual
+### From Release
 
-1. Download the latest release from [Releases](https://github.com/han-yi-1212/obsidian-knowledge-graph-agent/releases).
+1. Download `obsidian-knowledge-graph-agent.zip` from [Releases](https://github.com/han-yi-1212/obsidian-knowledge-graph-agent/releases).
 2. Extract into your vault's `.obsidian/plugins/knowledge-graph-agent/` directory.
-3. Enable the plugin in Obsidian's Community Plugins settings.
+3. Enable the plugin in Obsidian → Settings → Community Plugins.
 
 ### From Source
 
@@ -26,39 +56,69 @@ AI-powered knowledge graph for Obsidian with DeepSeek chat integration. Visualiz
 git clone https://github.com/han-yi-1212/obsidian-knowledge-graph-agent.git
 cd obsidian-knowledge-graph-agent
 npm install
-npm run build
+npm run build        # Compile the plugin
+npm run release:zip  # Package for distribution
 ```
 
-Then copy `main.js`, `styles.css`, and `manifest.json` to your vault's `.obsidian/plugins/knowledge-graph-agent/`.
+Copy `main.js`, `styles.css`, and `manifest.json` into `.obsidian/plugins/knowledge-graph-agent/`.
 
-## Configuration
+## Settings
 
 | Setting | Description | Default |
 |---|---|---|
-| DeepSeek API Key | Your API key from platform.deepseek.com | — |
-| Base URL | API endpoint (supports custom proxies) | `https://api.deepseek.com` |
-| Chat Model | Model used for chat | `deepseek-chat` |
-| Temperature | Response creativity (0–2) | 0.7 |
-| Max Tokens | Maximum response length | 4096 |
-| Max Context Chunks | Notes retrieved per query | 10 |
-| Chunk Size | Characters per text chunk | 500 |
-| Chunk Overlap | Overlap between chunks | 50 |
-| Graph Max Nodes | Maximum nodes in the graph | 200 |
-| Show Orphans | Display notes with zero links | Off |
+| **DeepSeek API Key** | Your API key from [platform.deepseek.com](https://platform.deepseek.com) | — |
+| **Base URL** | API endpoint (supports custom proxies) | `https://api.deepseek.com` |
+| **Chat Model** | Model used for chat | `deepseek-chat` |
+| **Temperature** | Response creativity (0 = precise, 2 = creative) | 0.7 |
+| **Max Tokens** | Maximum response length | 4096 |
+| **Max Context Chunks** | Retrieved note snippets per query | 10 |
+| **Chunk Size** | Characters per text chunk (triggers reindex) | 500 |
+| **Chunk Overlap** | Overlap between adjacent chunks (triggers reindex) | 50 |
+| **Graph Max Nodes** | Maximum visible graph nodes | 200 |
+| **Show Orphans** | Display notes with zero links | Off |
 
 ## Usage
 
-1. Click the network icon in the left ribbon, or run the "Open Knowledge Graph Agent" command.
-2. The left pane shows your knowledge graph. The right pane is the AI chat.
-3. **Search nodes** — Type in the toolbar to highlight matching nodes.
-4. **Chat** — Type a question and press Enter. The AI searches your vault and answers with citations.
-5. **Pin context** — Right-click a graph node and choose "Add to chat context" to pin that note. Pinned notes are prioritized over automatic search results.
+### Basic Workflow
 
-## Privacy
+1. Click the 🕸️ ribbon icon or run `Open Knowledge Graph Agent`.
+2. Left pane: knowledge graph. Right pane: AI chat.
+3. Type your question and press Enter to send.
+4. The AI searches your vault, injects relevant notes as context, and responds with citations.
 
-- Your notes never leave your computer except for the text chunks sent to the DeepSeek API as part of the chat prompt.
-- The API key is stored locally in Obsidian's plugin data.
-- No analytics, no telemetry, no third-party servers beyond the API endpoint you configure.
+### Graph Controls
+
+| Action | Result |
+|---|---|
+| Double-click node | Open the note |
+| Right-click node | Context menu (Open / Open in new pane / Add to chat) |
+| Toolbar search | Highlight matching nodes |
+| Refresh button | Rebuild graph from vault data |
+| Fit button | Zoom to fit all nodes |
+
+### Chat Tips
+
+- **Ask direct questions** — "What are the gaps in my knowledge management system?" The AI answers based on your vault.
+- **Pin context first** — Right-click a few key notes to pin them, then ask. The AI will prioritize those notes.
+- **Cross-note connections** — "How do A and B relate to each other?" The AI analyzes links across your notes.
+- **Stop anytime** — Press Stop or Enter during streaming to cancel. Partial output is preserved.
+
+### Reading Source Citations
+
+Each AI response has a `📚 Sources` section below it:
+
+- Click the summary bar to expand/collapse the detail list.
+- **📌 Pinned Notes** — Your manually selected context (highest priority).
+- **🔍 Retrieved Notes** — Automatically matched from your vault.
+- Each item shows the note name (clickable) and a relevance score or Pinned label.
+- Content snippets show the actual text that was matched.
+
+## Privacy & Security
+
+- Your notes leave your device only as text chunks sent to the DeepSeek API during chat.
+- The API key is stored in Obsidian's local plugin data.
+- No analytics, no telemetry, no third-party servers beyond the configured API endpoint.
+- All index data lives in memory and is lost when Obsidian closes.
 
 ## Development
 
@@ -66,9 +126,38 @@ Then copy `main.js`, `styles.css`, and `manifest.json` to your vault's `.obsidia
 npm install         # Install dependencies
 npm run dev         # Watch mode for development
 npm test            # Run tests (51 tests)
-npm run test:watch  # Run tests in watch mode
+npm run test:watch  # Watch mode for tests
+npm run build       # Production build
 npm run release:zip # Build and package for distribution
 ```
+
+### Project Structure
+
+```
+├── main.ts                  # Plugin entry point, lifecycle management
+├── src/
+│   ├── api.ts               # DeepSeek API client (streaming + non-streaming)
+│   ├── chat-view.ts         # Chat panel view
+│   ├── graph-view.ts        # Knowledge graph view (Cytoscape.js)
+│   ├── rag.ts               # RAG engine (index management + state machine)
+│   ├── retrieval.ts         # Pure retrieval functions (tokenize / chunk / search / rerank)
+│   ├── retrieval.test.ts    # Retrieval tests (36)
+│   ├── rag.test.ts          # Index lifecycle tests (15)
+│   ├── settings.ts          # Settings tab
+│   ├── types.ts             # Type definitions
+│   └── __mocks__/
+│       └── obsidian.ts      # Obsidian API mock for tests
+├── styles.css               # UI styles
+├── manifest.json            # Obsidian plugin manifest
+└── versions.json            # BRAT version compatibility map
+```
+
+## Known Limitations
+
+- Embedding-based semantic search is not yet implemented (current approach: keyword + rerank).
+- Graph layout can be slow with >500 nodes.
+- Chat history is session-only and lost on Obsidian restart.
+- Only DeepSeek API is supported (single provider).
 
 ## License
 
