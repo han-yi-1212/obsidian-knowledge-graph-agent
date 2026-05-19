@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
+import { Plugin, WorkspaceLeaf, TFile, MarkdownView, Notice } from 'obsidian';
 import { KnowledgeGraphView, GRAPH_VIEW_TYPE } from './src/graph-view';
 import { ChatView, CHAT_VIEW_TYPE } from './src/chat-view';
 import { KnowledgeGraphAgentSettingTab } from './src/settings';
@@ -89,6 +89,30 @@ export default class KnowledgeGraphAgentPlugin extends Plugin {
       callback: () => {
         this.conversationContext.selectedNotes = [];
         this.chatView?.updateContextBadge();
+      },
+    });
+
+    // ── Command: save last AI response to note ──
+    this.addCommand({
+      id: 'save-last-ai-response',
+      name: 'Save last AI response to note',
+      callback: async () => {
+        const lastAssistant = [...this.chatHistory].reverse().find(
+          m => m.role === 'assistant' && m.content && !m.content.startsWith('❌') && !m.content.startsWith('⏹️'),
+        );
+        if (!lastAssistant) {
+          new Notice('No AI response to save.');
+          return;
+        }
+        const lastUser = [...this.chatHistory].reverse().find(m => m.role === 'user');
+        const question = lastUser?.content ?? 'Unknown question';
+        if (this.chatView) {
+          await this.chatView.saveResponseToNote(
+            question,
+            lastAssistant.content,
+            lastAssistant.sources,
+          );
+        }
       },
     });
 

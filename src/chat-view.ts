@@ -279,8 +279,20 @@ export class ChatView extends ItemView {
             // Render source citations below the message
             if (allSources.length > 0 && messageWrapper) {
               this.renderSources(messageWrapper, allSources);
-              this.scrollToBottom();
             }
+
+            // Save-to-note button
+            if (messageWrapper) {
+              const saveBtn = messageWrapper.createEl('button', {
+                text: '💾 Save to note',
+                cls: 'kga-save-note-btn',
+              });
+              saveBtn.addEventListener('click', () => {
+                this.saveResponseToNote(text, fullText, allSources);
+              });
+            }
+
+            this.scrollToBottom();
 
             this.plugin.chatHistory.push({ role: 'user', content: text });
             this.plugin.chatHistory.push({ role: 'assistant', content: fullText, sources: allSources });
@@ -571,6 +583,40 @@ export class ChatView extends ItemView {
       this.sendBtn.disabled = !enabled;
       this.sendBtn.textContent = enabled ? 'Send' : '...';
     }
+  }
+
+  async saveResponseToNote(
+    question: string,
+    response: string,
+    sources?: SearchResult[],
+  ): Promise<void> {
+    const titleBase = question.slice(0, 50).replace(/[\\/:*?"<>|]/g, '').trim() || 'AI Response';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const title = `${titleBase} - ${timestamp}`;
+
+    let content = `# ${titleBase}\n\n`;
+    content += `## Question\n\n${question}\n\n`;
+    content += `## Response\n\n${response}\n\n`;
+
+    if (sources && sources.length > 0) {
+      content += `> [!note]- Sources\n`;
+      for (const s of sources) {
+        const label = s.sourceType === 'pinned' ? 'Pinned' : 'Retrieved';
+        content += `> - [[${s.title}]] (${label})\n`;
+      }
+      content += '\n';
+    }
+
+    const filePath = `${title}.md`;
+    const existing = this.app.vault.getAbstractFileByPath(filePath);
+    if (existing) {
+      new Notice(`Note already exists: ${filePath}`);
+      return;
+    }
+
+    const file = await this.app.vault.create(filePath, content);
+    await this.app.workspace.openLinkText(file.path, '', false);
+    new Notice(`Saved: ${file.path}`);
   }
 
   clearChat(): void {

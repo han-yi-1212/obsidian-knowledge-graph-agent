@@ -471,6 +471,28 @@
   border-color: rgba(239, 68, 68, 0.4);
 }
 
+/* ── Save to Note Button ── */
+.kga-save-note-btn {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--background-modifier-border, #45475a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #6c7086);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.kga-save-note-btn:hover {
+  background: rgba(99, 102, 241, 0.1);
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
 /* ══════════════════════════════════════════════════════════════
    Cytoscape overrides for Obsidian theme
    ══════════════════════════════════════════════════════════════ */
