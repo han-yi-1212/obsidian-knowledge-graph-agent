@@ -313,6 +313,7 @@ export class ChatView extends ItemView {
 
           if (rawDrafts && rawDrafts.length > 0) {
             // Truncate and sanitize
+            const totalFromAI = rawDrafts.length;
             const truncated = rawDrafts.slice(0, MAX_DRAFTS);
             const { cleaned: drafts, warnings } = sanitizeDrafts(truncated);
             const errors = validateDrafts(drafts);
@@ -336,7 +337,7 @@ export class ChatView extends ItemView {
                 }
               };
 
-              new DraftPreviewModal(this.app, drafts, conflicts, warnings, handleConfirm).open();
+              new DraftPreviewModal(this.app, drafts, conflicts, warnings, totalFromAI, handleConfirm).open();
             } else {
               const errorText = errors.map(e => `- ${e.message}`).join('\n');
               await this.addMessage('assistant', `⚠️ Draft validation issues:\n\n${errorText}\n\n<details><summary>Raw AI response</summary>\n\n${response}\n</details>`);

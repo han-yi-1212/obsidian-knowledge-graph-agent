@@ -7,6 +7,7 @@ import {
   validateDrafts,
   resolvePath,
   checkConflicts,
+  createNotesFromDrafts,
   summarizeResults,
   MAX_DRAFTS,
 } from './note-drafts';
@@ -375,6 +376,202 @@ describe('summarizeResults', () => {
     const summary = summarizeResults(results);
     expect(summary).toContain('2 created');
     expect(summary).toContain('1 renamed');
+  });
+});
+
+// ── createNotesFromDrafts ──
+
+describe('createNotesFromDrafts', () => {
+  function setupMocks(existingPaths: string[] = []) {
+    const createdPaths: string[] = [];
+    const createdContents: string[] = [];
+    const createdFolders: string[] = [];
+    const indexedFiles: any[] = [];
+
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn((path: string) => {
+          if (existingPaths.includes(path)) return { path };
+          if (createdPaths.includes(path)) return { path };
+          return null;
+        }),
+        createFolder: vi.fn(async (path: string) => {
+          createdFolders.push(path);
+          return { path };
+        }),
+        create: vi.fn(async (path: string, content: string) => {
+          createdPaths.push(path);
+          createdContents.push(content);
+          return { path, extension: 'md' };
+        }),
+      },
+    } as any;
+
+    const ragEngine = {
+      indexFile: vi.fn(async (file: any) => {
+        indexedFiles.push(file);
+      }),
+    } as any;
+
+    return { app, ragEngine, createdPaths, createdContents, createdFolders, indexedFiles };
+  }
+
+  it('creates a single note in default folder', async () => {
+    const { app, ragEngine, createdPaths, createdFolders } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'My Note', content: '# Hello world', folder: undefined },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('created');
+    expect(results[0].path).toBe('AI Notes/My Note.md');
+    expect(createdPaths).toContain('AI Notes/My Note.md');
+    expect(createdFolders).toContain('AI Notes');
+  });
+
+  it('creates notes in a custom folder', async () => {
+    const { app, ragEngine, createdPaths, createdFolders } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'Project Alpha', content: '## Roadmap', folder: 'Projects' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results[0].path).toBe('Projects/Project Alpha.md');
+    expect(createdFolders).toContain('Projects');
+  });
+
+  it('creates nested folders recursively', async () => {
+    const { app, ragEngine, createdPaths, createdFolders } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'Deep Note', content: 'deep', folder: 'A/B/C' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('created');
+    // Should create A, then A/B, then A/B/C
+    expect(createdFolders).toContain('A');
+    expect(createdFolders).toContain('A/B');
+    expect(createdFolders).toContain('A/B/C');
+  });
+
+  it('auto-renames when file already exists', async () => {
+    const { app, ragEngine, createdPaths } = setupMocks([
+      'AI Notes/Dupe.md', // pre-existing conflict
+    ]);
+    const drafts: NoteDraft[] = [
+      { title: 'Dupe', content: 'second copy' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results[0].status).toBe('renamed');
+    expect(results[0].path).toBe('AI Notes/Dupe - 2.md');
+    expect(results[0].originalPath).toBe('AI Notes/Dupe.md');
+    expect(createdPaths).toContain('AI Notes/Dupe - 2.md');
+  });
+
+  it('increments suffix when -2 already exists', async () => {
+    const { app, ragEngine } = setupMocks([
+      'AI Notes/Dupe.md',
+      'AI Notes/Dupe - 2.md',
+    ]);
+    const drafts: NoteDraft[] = [
+      { title: 'Dupe', content: 'third copy' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results[0].status).toBe('renamed');
+    expect(results[0].path).toBe('AI Notes/Dupe - 3.md');
+  });
+
+  it('calls ragEngine.indexFile for each created note', async () => {
+    const { app, ragEngine, indexedFiles } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'A', content: 'a' },
+      { title: 'B', content: 'b' },
+    ];
+
+    await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(ragEngine.indexFile).toHaveBeenCalledTimes(2);
+    expect(indexedFiles[0].path).toBe('AI Notes/A.md');
+    expect(indexedFiles[1].path).toBe('AI Notes/B.md');
+  });
+
+  it('captures errors without throwing', async () => {
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn().mockReturnValue(null),
+        createFolder: vi.fn().mockResolvedValue({}),
+        create: vi.fn().mockRejectedValue(new Error('Disk full')),
+      },
+    } as any;
+    const ragEngine = { indexFile: vi.fn() } as any;
+
+    const drafts: NoteDraft[] = [
+      { title: 'Fail', content: 'x' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toContain('Disk full');
+  });
+
+  it('skips folder creation when folder already exists', async () => {
+    const { app, ragEngine, createdFolders } = setupMocks(['AI Notes']); // folder exists as file
+    // Use a fresh app where the folder already "exists"
+    const app2 = {
+      vault: {
+        getAbstractFileByPath: vi.fn((path: string) => {
+          if (path === 'AI Notes') return { path }; // folder exists
+          return null; // file does not exist
+        }),
+        createFolder: vi.fn(async () => ({})),
+        create: vi.fn(async (path: string, content: string) => ({ path, extension: 'md' })),
+      },
+    } as any;
+
+    const drafts: NoteDraft[] = [
+      { title: 'Fresh', content: 'x' },
+    ];
+
+    await createNotesFromDrafts(drafts, app2, ragEngine);
+
+    expect(app2.vault.createFolder).not.toHaveBeenCalled();
+    expect(app2.vault.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('sanitizes unsafe title and folder internally', async () => {
+    const { app, ragEngine, createdPaths } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'Bad:Title', folder: 'Bad/../Folder', content: 'x' },
+    ];
+
+    const results = await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(results[0].status).toBe('created');
+    // Path must not contain colon, "..", or double-slash
+    expect(results[0].path).not.toContain(':');
+    expect(results[0].path).not.toContain('..');
+    expect(results[0].path).toBe('Bad/Folder/BadTitle.md');
+  });
+
+  it('saves correct markdown content', async () => {
+    const { app, ragEngine, createdContents } = setupMocks();
+    const drafts: NoteDraft[] = [
+      { title: 'Content Test', content: '# Title\n\nBody text with [[links]]' },
+    ];
+
+    await createNotesFromDrafts(drafts, app, ragEngine);
+
+    expect(createdContents[0]).toBe('# Title\n\nBody text with [[links]]');
   });
 });
 

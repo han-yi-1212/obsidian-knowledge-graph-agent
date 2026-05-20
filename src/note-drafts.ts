@@ -94,11 +94,13 @@ export function sanitizeDrafts(drafts: NoteDraft[]): {
 }
 
 /**
- * Resolve the full vault path for a sanitized draft.
+ * Resolve the full vault path for a draft. Always sanitizes title and folder
+ * internally so callers don't need to pre-clean.
  */
 export function resolvePath(draft: NoteDraft): string {
   const folder = sanitizeFolder(draft.folder);
-  return `${folder}/${draft.title}.md`;
+  const title = sanitizeTitle(draft.title);
+  return `${folder}/${title}.md`;
 }
 
 /**
@@ -245,7 +247,7 @@ export async function createNotesFromDrafts(
   for (const draft of drafts) {
     try {
       const folder = sanitizeFolder(draft.folder);
-      const baseName = draft.title;
+      const baseName = sanitizeTitle(draft.title);
 
       // Dedup: append -2, -3… if file already exists
       let fileName = baseName;

@@ -7,6 +7,7 @@ export class DraftPreviewModal extends Modal {
   private drafts: NoteDraft[];
   private conflicts: Map<number, string>;
   private warnings: DraftSanitizeWarning[];
+  private truncatedFrom: number;
   private onConfirm: OnConfirm;
   private checkboxes: HTMLInputElement[] = [];
 
@@ -15,12 +16,14 @@ export class DraftPreviewModal extends Modal {
     drafts: NoteDraft[],
     conflicts: Map<number, string>,
     warnings: DraftSanitizeWarning[],
+    truncatedFrom: number,
     onConfirm: OnConfirm,
   ) {
     super(app);
     this.drafts = drafts;
     this.conflicts = conflicts;
     this.warnings = warnings;
+    this.truncatedFrom = truncatedFrom;
     this.onConfirm = onConfirm;
   }
 
@@ -31,7 +34,13 @@ export class DraftPreviewModal extends Modal {
 
     contentEl.createEl('h3', { text: `Review ${this.drafts.length} note drafts` });
 
-    // Global warning banner if drafts were truncated or sanitized
+    // Truncation warning
+    if (this.truncatedFrom > this.drafts.length) {
+      const truncBanner = contentEl.createDiv('kga-draft-warnings-banner');
+      truncBanner.setText(`⚠️ AI generated ${this.truncatedFrom} drafts, but the limit is ${this.drafts.length}. Only the first ${this.drafts.length} are shown.`);
+    }
+
+    // Global warning banner if drafts were sanitized
     if (this.warnings.length > 0) {
       const banner = contentEl.createDiv('kga-draft-warnings-banner');
       banner.createSpan({ text: `⚠️ ${this.warnings.length} field(s) sanitized:` });
